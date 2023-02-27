@@ -1,0 +1,124 @@
+parameters:
+- name: 'arch'
+  type: string
+- name: 'pool'
+  type: object
+  default: {}
+- name: 'containerImage'
+  type: string
+- name: 'codeCoverage'
+  type: boolean
+  default: false
+
+jobs:
+- job:
+  displayName: ${{ parameters.arch }}
+  timeoutInMinutes: 60
+  pool: ${{ parameters.pool }}
+
+  container:
+    image: ${{ parameters.containerImage }}
+
+  steps:
+  - ${{ if and(eq(parameters.arch, 'amd64'), parameters.codeCoverage) }}:
+    - script: |
+        wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+        sudo dpkg -i packages-microsoft-prod.deb
+        rm packages-microsoft-prod.deb
+        sudo apt-get update
+        sudo apt-get install -y apt-transport-https
+        sudo apt-get install -y dotnet-sdk-6.0
+      displayName: install .Net
+  - script: |
+      sudo apt-get install -y \
+          libboost-system-dev \
+          libboost-thread-dev \
+          libboost-serialization-dev \
+          libexplain-dev \
+          libhiredis-dev \
+          libnl-3-dev \
+          libnl-route-3-dev \
+          libnl-genl-3-dev \
+          libnl-nf-3-dev \
+          libevent-dev
+    displayName: "Install dependencies"
+  - checkout: self
+    clean: true
+    submodules: true
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: Azure.sonic-buildimage.common_libs
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+      path: $(Build.ArtifactStagingDirectory)/download
+      ${{ if eq(parameters.arch, 'amd64') }}:
+        artifact: common-lib
+      ${{ else }}:
+        artifact: common-lib.${{ parameters.arch }}
+      patterns: |
+        target/debs/buster/libyang-*.deb
+        target/debs/buster/libyang_*.deb
+    displayName: "Download libyang from common lib"
+  - script: |
+      set -ex
+      sudo dpkg -i $(find ./download -name *.deb)
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install libyang from common lib"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      ${{ if eq(parameters.arch, 'amd64') }}:
+        pipeline: Azure.sonic-swss-common
+        artifact: sonic-swss-common.bullseye.amd64
+      ${{ if eq(parameters.arch, 'arm64') }}:
+        pipeline: Azure.sonic-buildimage.official.centec-arm64
+        artifact: sonic-buildimage.centec-arm64
+      ${{ if eq(parameters.arch, 'armhf') }}:
+        pipeline: Azure.sonic-buildimage.official.marvell-armhf
+        artifact: sonic-buildimage.marvell-armhf
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+    ${{ if eq(parameters.arch, 'amd64') }}:
+      displayName: "Download sonic-swss-common"
+    ${{ else }}:
+      displayName: "Download sonic-buildimage.official.${{ parameters.arch }}"
+  - ${{ if eq(parameters.arch, 'amd64') }}:
+    - script: |
+        set -ex
+        # LIBSWSSCOMMON
+        sudo dpkg -i libswsscommon_1.0.0_amd64.deb
+        sudo dpkg -i libswsscommon-dev_1.0.0_amd64.deb
+      workingDirectory: $(Pipeline.Workspace)/
+      displayName: 'Install libswsscommon package'
+  - ${{ else }}:
+    - script: |
+        set -ex
+        # LIBSWSSCOMMON
+        sudo apt-get -y purge libhiredis-dev libnl-3-dev libnl-route-3-dev
+        sudo dpkg -i target/debs/bullseye/libnl-3-200_*.deb
+        sudo dpkg -i target/debs/bullseye/libnl-genl-3-200_*.deb
+        sudo dpkg -i target/debs/bullseye/libnl-route-3-200_*.deb
+        sudo dpkg -i target/debs/bullseye/libnl-nf-3-200_*.deb
+        sudo dpkg -i target/debs/bullseye/libhiredis0.14_*.deb
+        sudo dpkg -i target/debs/bullseye/libhiredis-dev_*.deb
+        sudo dpkg -i target/debs/bullseye/libswsscommon_1.0.0_*.deb
+        sudo dpkg -i target/debs/bullseye/libswsscommon-dev_1.0.0_*.deb
+      workingDirectory: $(Pipeline.Workspace)/
+      displayName: 'Install libswsscommon package'
+  - script: |
+      rm ../*.deb
+      dpkg-buildpackage -us -uc -b -j$(nproc)
+      cp ../*.deb $(Build.ArtifactStagingDirectory)
+    displayName: "Compile sonic dhcpmon"
+  - publish: $(Build.ArtifactStagingDirectory)
+    artifact: sonic-dhcpmon.${{ parameters.arch }}
+    displayName: "Archive dhcpmon debian packages"
+  - ${{ if and(eq(parameters.arch, 'amd64'), parameters.codeCoverage) }}:
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        summaryFileLocation: dhcpmon-test-result.xml
+        pathToSources: $(Build.SourcesDirectory)
+        codeCoverageTool: 'Cobertura'

@@ -24,6 +24,6 @@ C_DEPS += \
 src/%.o: src/%.cpp
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C Compiler'
-	$(CC) -O3 -g3 -Wall -I$(PWD)/../sonic-swss-common/common -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+	$(CC) -O3 -g3 -Wall -I/usr/include/swss -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '

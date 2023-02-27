@@ -2,8 +2,8 @@
 
 export DEB_BUILD_MAINT_OPTIONS=hardening=+all
 
-DEB_CFLAGS_APPEND=-std=gnu11
-export DEB_CFLAGS_APPEND
+DEB_CPPFLAGS_APPEND=-std=gnu11
+export DEB_CPPFLAGS_APPEND
 
 %:
 	dh $@ --parallel
