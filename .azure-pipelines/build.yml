@@ -30,6 +30,7 @@ jobs:
         sudo apt-get install -y dotnet-sdk-6.0
       displayName: install .Net
   - script: |
+      sudo apt-get update
       sudo apt-get install -y \
           libboost-system-dev \
           libboost-thread-dev \
