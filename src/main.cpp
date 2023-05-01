@@ -150,15 +150,15 @@ int main(int argc, char **argv)
             i++;
             break;
         case 's':
-            snaplen = atoi(argv[i + 1]);
+            snaplen = strtol(argv[i + 1], NULL, 10);
             i += 2;
             break;
         case 'w':
-            window_interval = atoi(argv[i + 1]);
+            window_interval = strtol(argv[i + 1], NULL, 10);
             i += 2;
             break;
         case 'c':
-            max_unhealthy_count = atoi(argv[i + 1]);
+            max_unhealthy_count = strtol(argv[i + 1], NULL, 10);
             i += 2;
             break;
         case 'D':
