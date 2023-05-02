@@ -71,44 +71,21 @@ jobs:
     inputs:
       source: specific
       project: build
+      pipeline: Azure.sonic-swss-common
       ${{ if eq(parameters.arch, 'amd64') }}:
-        pipeline: Azure.sonic-swss-common
-        artifact: sonic-swss-common.bullseye.amd64
-      ${{ if eq(parameters.arch, 'arm64') }}:
-        pipeline: Azure.sonic-buildimage.official.centec-arm64
-        artifact: sonic-buildimage.centec-arm64
-      ${{ if eq(parameters.arch, 'armhf') }}:
-        pipeline: Azure.sonic-buildimage.official.marvell-armhf
-        artifact: sonic-buildimage.marvell-armhf
+        artifact: sonic-swss-common
+      ${{ else }}:
+        artifact: sonic-swss-common.${{ parameters.arch }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
-    ${{ if eq(parameters.arch, 'amd64') }}:
       displayName: "Download sonic-swss-common"
-    ${{ else }}:
-      displayName: "Download sonic-buildimage.official.${{ parameters.arch }}"
-  - ${{ if eq(parameters.arch, 'amd64') }}:
-    - script: |
-        set -ex
-        # LIBSWSSCOMMON
-        sudo dpkg -i libswsscommon_1.0.0_amd64.deb
-        sudo dpkg -i libswsscommon-dev_1.0.0_amd64.deb
-      workingDirectory: $(Pipeline.Workspace)/
-      displayName: 'Install libswsscommon package'
-  - ${{ else }}:
-    - script: |
-        set -ex
-        # LIBSWSSCOMMON
-        sudo apt-get -y purge libhiredis-dev libnl-3-dev libnl-route-3-dev
-        sudo dpkg -i target/debs/bullseye/libnl-3-200_*.deb
-        sudo dpkg -i target/debs/bullseye/libnl-genl-3-200_*.deb
-        sudo dpkg -i target/debs/bullseye/libnl-route-3-200_*.deb
-        sudo dpkg -i target/debs/bullseye/libnl-nf-3-200_*.deb
-        sudo dpkg -i target/debs/bullseye/libhiredis0.14_*.deb
-        sudo dpkg -i target/debs/bullseye/libhiredis-dev_*.deb
-        sudo dpkg -i target/debs/bullseye/libswsscommon_1.0.0_*.deb
-        sudo dpkg -i target/debs/bullseye/libswsscommon-dev_1.0.0_*.deb
-      workingDirectory: $(Pipeline.Workspace)/
-      displayName: 'Install libswsscommon package'
+  - script: |
+      set -ex
+      # LIBSWSSCOMMON
+      sudo dpkg -i libswsscommon_1.0.0_amd64.deb
+      sudo dpkg -i libswsscommon-dev_1.0.0_amd64.deb
+    workingDirectory: $(Pipeline.Workspace)/
+    displayName: 'Install libswsscommon package'
   - script: |
       rm ../*.deb
       dpkg-buildpackage -us -uc -b -j$(nproc)
