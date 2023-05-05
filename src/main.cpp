@@ -116,9 +116,9 @@ int main(int argc, char **argv)
     int rv = EXIT_FAILURE;
     int i;
     char *endptr;
-    long int window_interval = dhcpmon_default_health_check_window;
-    long int max_unhealthy_count = dhcpmon_default_unhealthy_max_count;
-    long int snaplen = dhcpmon_default_snaplen;
+    int window_interval = dhcpmon_default_health_check_window;
+    int max_unhealthy_count = dhcpmon_default_unhealthy_max_count;
+    size_t snaplen = dhcpmon_default_snaplen;
     int make_daemon = 0;
     bool debug_mode = false;
     errno = 0;
