@@ -8,6 +8,7 @@
 #include <err.h>
 #include <errno.h>
 #include <libgen.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -152,7 +153,7 @@ int main(int argc, char **argv)
             break;
         case 's':
             snaplen = strtol(argv[i + 1], NULL, 10);
-            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+            if ((errno == ERANGE && (snaplen == LONG_MAX || snaplen == LONG_MIN)) || (errno != 0 && snaplen == 0)) {
                 fprintf(stderr, "%s: %s: Invalid snap length\n", basename(argv[0]), argv[i + 1]);
                 usage(basename(argv[0]));
             }
@@ -160,7 +161,7 @@ int main(int argc, char **argv)
             break;
         case 'w':
             window_interval = strtol(argv[i + 1], NULL, 10);
-            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+            if ((errno == ERANGE && (window_interval == LONG_MAX || window_interval == LONG_MIN)) || (errno != 0 && window_interval == 0)) {
                 fprintf(stderr, "%s: %s: Invalid window interval\n", basename(argv[0]), argv[i + 1]);
                 usage(basename(argv[0]));
             }
@@ -168,7 +169,7 @@ int main(int argc, char **argv)
             break;
         case 'c':
             max_unhealthy_count = strtol(argv[i + 1], NULL, 10);
-            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+            if ((errno == ERANGE && (max_unhealthy_count == LONG_MAX || max_unhealthy_count == LONG_MIN)) || (errno != 0 && max_unhealthy_count == 0)) {
                 fprintf(stderr, "%s: %s: Invalid max unhealthy count\n", basename(argv[0]), argv[i + 1]);
                 usage(basename(argv[0]));
             }
