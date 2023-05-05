@@ -120,7 +120,7 @@ int main(int argc, char **argv)
     size_t snaplen = dhcpmon_default_snaplen;
     int make_daemon = 0;
     bool debug_mode = false;
-    int errno = 0;
+    errno = 0;
 
     setlogmask(LOG_UPTO(LOG_INFO));
     openlog(basename(argv[0]), LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -153,7 +153,7 @@ int main(int argc, char **argv)
             break;
         case 's':
             snaplen = strtol(argv[i + 1], NULL, 10);
-            if ((errno == ERANGE && (snaplen == LONG_MAX || snaplen == LONG_MIN)) || (errno != 0 && snaplen == 0)) {
+            if ((errno == ERANGE && (snaplen == INT_MAX || snaplen == INT_MIN)) || (errno != 0 && snaplen == 0)) {
                 fprintf(stderr, "%s: %s: Invalid snap length\n", basename(argv[0]), argv[i + 1]);
                 usage(basename(argv[0]));
             }
@@ -161,7 +161,7 @@ int main(int argc, char **argv)
             break;
         case 'w':
             window_interval = strtol(argv[i + 1], NULL, 10);
-            if ((errno == ERANGE && (window_interval == LONG_MAX || window_interval == LONG_MIN)) || (errno != 0 && window_interval == 0)) {
+            if ((errno == ERANGE && (window_interval == INT_MAX || window_interval == INT_MIN)) || (errno != 0 && window_interval == 0)) {
                 fprintf(stderr, "%s: %s: Invalid window interval\n", basename(argv[0]), argv[i + 1]);
                 usage(basename(argv[0]));
             }
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
             break;
         case 'c':
             max_unhealthy_count = strtol(argv[i + 1], NULL, 10);
-            if ((errno == ERANGE && (max_unhealthy_count == LONG_MAX || max_unhealthy_count == LONG_MIN)) || (errno != 0 && max_unhealthy_count == 0)) {
+            if ((errno == ERANGE && (max_unhealthy_count == INT_MAX || max_unhealthy_count == INT_MIN)) || (errno != 0 && max_unhealthy_count == 0)) {
                 fprintf(stderr, "%s: %s: Invalid max unhealthy count\n", basename(argv[0]), argv[i + 1]);
                 usage(basename(argv[0]));
             }
