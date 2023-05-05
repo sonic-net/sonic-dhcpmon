@@ -119,6 +119,7 @@ int main(int argc, char **argv)
     size_t snaplen = dhcpmon_default_snaplen;
     int make_daemon = 0;
     bool debug_mode = false;
+    int errno = 0;
 
     setlogmask(LOG_UPTO(LOG_INFO));
     openlog(basename(argv[0]), LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -151,14 +152,26 @@ int main(int argc, char **argv)
             break;
         case 's':
             snaplen = strtol(argv[i + 1], NULL, 10);
+            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+                fprintf(stderr, "%s: %s: Invalid snap length\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
             i += 2;
             break;
         case 'w':
             window_interval = strtol(argv[i + 1], NULL, 10);
+            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+                fprintf(stderr, "%s: %s: Invalid window interval\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
             i += 2;
             break;
         case 'c':
             max_unhealthy_count = strtol(argv[i + 1], NULL, 10);
+            if ((errno == ERANGE && (val == LONG_MAX || val == LONG_MIN)) || (errno != 0 && val == 0)) {
+                fprintf(stderr, "%s: %s: Invalid max unhealthy count\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
             i += 2;
             break;
         case 'D':
