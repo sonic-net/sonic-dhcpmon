@@ -114,11 +114,13 @@ int main(int argc, char **argv)
 {
     int rv = EXIT_FAILURE;
     int i;
+    char *endptr;
     int window_interval = dhcpmon_default_health_check_window;
     int max_unhealthy_count = dhcpmon_default_unhealthy_max_count;
     size_t snaplen = dhcpmon_default_snaplen;
     int make_daemon = 0;
     bool debug_mode = false;
+    errno = 0;
 
     setlogmask(LOG_UPTO(LOG_INFO));
     openlog(basename(argv[0]), LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -150,15 +152,27 @@ int main(int argc, char **argv)
             i++;
             break;
         case 's':
-            snaplen = atoi(argv[i + 1]);
+            snaplen = strtol(argv[i + 1], &endptr, 10);
+            if (errno != 0 || *endptr != '\0') {
+                fprintf(stderr, "%s: %s: Invalid snap length\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
             i += 2;
             break;
         case 'w':
-            window_interval = atoi(argv[i + 1]);
+            window_interval = strtol(argv[i + 1], &endptr, 10);
+            if (errno != 0 || *endptr != '\0') {
+                fprintf(stderr, "%s: %s: Invalid window interval\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
             i += 2;
             break;
         case 'c':
-            max_unhealthy_count = atoi(argv[i + 1]);
+            max_unhealthy_count = strtol(argv[i + 1], &endptr, 10);
+            if (errno != 0 || *endptr != '\0') {
+                fprintf(stderr, "%s: %s: Invalid max unhealthy count\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
             i += 2;
             break;
         case 'D':
