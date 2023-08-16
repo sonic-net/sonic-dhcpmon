@@ -560,7 +560,8 @@ static void dhcp_print_counters(const char *vlan_intf,
 
     syslog(
         LOG_NOTICE,
-        "[%*s-%*s rx/tx] Discover: %*lu/%*lu, Offer: %*lu/%*lu, Request: %*lu/%*lu, ACK: %*lu/%*lu\n",
+        "[%*s-%*s rx/tx] Discover: %*" PRId64 "/%*" PRId64 ", Offer: %*" PRId64 "/%*" PRId64 
+        ", Request: %*" PRId64 "/%*" PRId64 ", ACK: %*" PRId64 "/%*" PRId64 "\n",
         IF_NAMESIZE, vlan_intf,
         (int) strlen(counter_desc[type]), counter_desc[type],
         DHCP_COUNTER_WIDTH, counters[DHCP_RX][DHCP_MESSAGE_TYPE_DISCOVER],
