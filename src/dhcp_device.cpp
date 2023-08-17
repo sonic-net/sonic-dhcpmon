@@ -304,9 +304,6 @@ static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffe
                 offset += dhcp_option[offset + 1] + 2;
             }
         }
-    } else {
-        syslog(LOG_WARNING, "read_callback(%s %s): read length (%ld) is too small to capture DHCP options",
-               context->intf, dir == DHCP_TX ? "TX" : "RX", buffer_sz);
     }
 }
 
