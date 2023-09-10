@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <syslog.h>
 #include <jsoncpp/json/json.h>
+#include <inttypes.h>
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
 #include <netpacket/packet.h>
@@ -700,7 +701,8 @@ static void dhcp_print_counters(const char *vlan_intf,
 
     syslog(
         LOG_NOTICE,
-        "[%*s-%*s rx/tx] Discover: %*lu/%*lu, Offer: %*lu/%*lu, Request: %*lu/%*lu, ACK: %*lu/%*lu\n",
+        "[%*s-%*s rx/tx] Discover: %*" PRIu64 "/%*" PRIu64 ", Offer: %*" PRIu64 "/%*" PRIu64 
+        ", Request: %*" PRIu64 "/%*" PRIu64 ", ACK: %*" PRIu64 "/%*" PRIu64 "\n",
         IF_NAMESIZE, vlan_intf,
         (int) strlen(counter_desc[type]), counter_desc[type],
         DHCP_COUNTER_WIDTH, counters[DHCP_RX][DHCP_MESSAGE_TYPE_DISCOVER],
