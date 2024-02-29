@@ -26,7 +26,6 @@
 #include <netpacket/packet.h>
 #include "subscriberstatetable.h"
 #include "select.h"
-#include <linux/if_packet.h>
 #include <linux/if_ether.h>
 #include <netinet/in.h>
 #include <stdio.h>
