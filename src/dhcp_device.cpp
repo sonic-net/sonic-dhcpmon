@@ -26,6 +26,10 @@
 #include <netpacket/packet.h>
 #include "subscriberstatetable.h"
 #include "select.h"
+#include <linux/if_packet.h>
+#include <linux/if_ether.h>
+#include <netinet/in.h>
+#include <stdio.h>
 
 #include "dhcp_devman.h"
 #include "dhcp_device.h"
@@ -508,16 +512,14 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
  *
  * @return none
  */
-static void read_tx_callback(int fd, short event, void *arg)
-{
+static void read_tx_callback(int fd, short event, void *arg) {
     auto devices = (std::unordered_map<std::string, struct intf*> *)arg;
     ssize_t buffer_sz;
     struct sockaddr_ll sll;
     socklen_t slen = sizeof sll;
     dhcp_device_context_t *context = NULL;
 
-    while ((buffer_sz = recvfrom(fd, tx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) 
-    {
+    while ((buffer_sz = recvfrom(fd, tx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) {
         char interfaceName[IF_NAMESIZE];
         if (if_indextoname(sll.sll_ifindex, interfaceName) == NULL) {
             syslog(LOG_WARNING, "invalid output interface index %d\n", sll.sll_ifindex);
@@ -533,6 +535,14 @@ static void read_tx_callback(int fd, short event, void *arg)
                 client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
             }
         }
+    }
+
+    struct tpacket_stats stats;
+    socklen_t len = sizeof(stats);
+    if (getsockopt(fd, SOL_PACKET, PACKET_STATISTICS, &stats, &len) == -1) {
+        syslog(LOG_ERR, "getsockopt failed to retrieve packet statistics");
+    } else {
+        syslog(LOG_INFO, "Total packets: %u, Dropped packets: %u", stats.tp_packets, stats.tp_drops);
     }
 }
 
