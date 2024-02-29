@@ -23,7 +23,7 @@
 #include <inttypes.h>
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
-#include <netpacket/packet.h>
+#include <linux/if_packet.h>
 #include "subscriberstatetable.h"
 #include "select.h"
 #include <linux/if_ether.h>
