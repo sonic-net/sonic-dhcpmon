@@ -971,7 +971,7 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
-        if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &new_rcvbuf_size, sizeof(new_rcvbuf_size)) == -1) {
+        if (setsockopt(tx_sock, SOL_SOCKET, SO_RCVBUF, &new_rcvbuf_size, sizeof(new_rcvbuf_size)) == -1) {
             syslog(LOG_ALERT, "setsockopt: failed to set rcvbuf size '%s'\n", strerror(errno));
         }
 
