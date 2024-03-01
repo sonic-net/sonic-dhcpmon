@@ -23,12 +23,9 @@
 #include <inttypes.h>
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
-#include <linux/if_packet.h>
+#include <netpacket/packet.h>
 #include "subscriberstatetable.h"
 #include "select.h"
-#include <linux/if_ether.h>
-#include <netinet/in.h>
-#include <stdio.h>
 
 #include "dhcp_devman.h"
 #include "dhcp_device.h"
@@ -83,6 +80,8 @@ std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
 uint64_t db_counter[DHCP_MESSAGE_TYPE_COUNT] = {};
 
 const std::string init_counter_str;
+
+static const size_t new_rcvbuf_size = 16777216;
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
  * This program is obtained using the following command tcpdump:
@@ -511,14 +510,16 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
  *
  * @return none
  */
-static void read_tx_callback(int fd, short event, void *arg) {
+static void read_tx_callback(int fd, short event, void *arg)
+{
     auto devices = (std::unordered_map<std::string, struct intf*> *)arg;
     ssize_t buffer_sz;
     struct sockaddr_ll sll;
     socklen_t slen = sizeof sll;
     dhcp_device_context_t *context = NULL;
 
-    while ((buffer_sz = recvfrom(fd, tx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) {
+    while ((buffer_sz = recvfrom(fd, tx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) 
+    {
         char interfaceName[IF_NAMESIZE];
         if (if_indextoname(sll.sll_ifindex, interfaceName) == NULL) {
             syslog(LOG_WARNING, "invalid output interface index %d\n", sll.sll_ifindex);
@@ -534,14 +535,6 @@ static void read_tx_callback(int fd, short event, void *arg) {
                 client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
             }
         }
-    }
-
-    struct tpacket_stats stats;
-    socklen_t len = sizeof(stats);
-    if (getsockopt(fd, SOL_PACKET, PACKET_STATISTICS, &stats, &len) == -1) {
-        syslog(LOG_ERR, "getsockopt failed to retrieve packet statistics");
-    } else {
-        syslog(LOG_INFO, "Total packets: %u, Dropped packets: %u", stats.tp_packets, stats.tp_drops);
     }
 }
 
@@ -976,6 +969,10 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
         if (setsockopt(tx_sock, SOL_SOCKET, SO_ATTACH_FILTER, &dhcp_outbound_sock_bfp, sizeof(dhcp_outbound_sock_bfp)) != 0) {
             syslog(LOG_ALERT, "setsockopt: failed to attach filter with '%s'\n", strerror(errno));
             exit(1);
+        }
+
+        if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &new_rcvbuf_size, sizeof(new_rcvbuf_size)) == -1) {
+            syslog(LOG_ALERT, "setsockopt: failed to set rcvbuf size '%s'\n", strerror(errno));
         }
 
         rx_ev = event_new(base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
