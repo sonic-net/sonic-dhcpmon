@@ -921,6 +921,22 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
 }
 
 /**
+ * @code getMaxBufferSize();
+ *
+ * @get max buffer size from /proc/sys/net/core/rmem_max.
+ */
+size_t getMaxBufferSize() {
+    std::ifstream file("/proc/sys/net/core/rmem_max");
+    int maxBufferSize = 0;
+    if (file) {
+        file >> maxBufferSize;
+    } else {
+        syslog(LOG_ALERT, "Could not open /proc/sys/net/core/rmem_max");
+    }
+    return maxBufferSize;
+}
+
+/**
  * @code dhcp_device_start_capture(snaplen, base, giaddr_ip);
  *
  * @brief starts packet capture on this interface
