@@ -24,6 +24,7 @@
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
 #include <netpacket/packet.h>
+#include <fstream>
 #include "subscriberstatetable.h"
 #include "select.h"
 
