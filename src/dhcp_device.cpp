@@ -81,8 +81,6 @@ uint64_t db_counter[DHCP_MESSAGE_TYPE_COUNT] = {};
 
 const std::string init_counter_str;
 
-static const size_t new_rcvbuf_size = 16777216;
-
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
  * This program is obtained using the following command tcpdump:
  * `tcpdump -dd "outbound and udp and (port 67 or port 68)"`
@@ -971,8 +969,14 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
-        if (setsockopt(tx_sock, SOL_SOCKET, SO_RCVBUF, &new_rcvbuf_size, sizeof(new_rcvbuf_size)) == -1) {
-            syslog(LOG_ALERT, "setsockopt: failed to set rcvbuf size '%s'\n", strerror(errno));
+        size_t maxBufferSize = getMaxBufferSize();
+        if (maxBufferSize == 0) {
+            syslog(LOG_ALERT, "dhcp_device_start_capture: failed to get max buffer size, using default");
+        }
+        else {
+            if (setsockopt(tx_sock, SOL_SOCKET, SO_RCVBUF, &maxBufferSize, sizeof(maxBufferSize)) == -1) {
+                syslog(LOG_ALERT, "setsockopt: failed to set rcvbuf size '%s'\n", strerror(errno));
+            }
         }
 
         rx_ev = event_new(base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
