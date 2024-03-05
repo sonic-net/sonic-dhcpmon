@@ -22,6 +22,8 @@
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
 #include <netpacket/packet.h>
+#include <netpacket/packet.h>
+#include <fstream>
 #include "subscriberstatetable.h"
 #include "select.h"
 
@@ -754,6 +756,22 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
 }
 
 /**
+ * @code getMaxBufferSize();
+ *
+ * @get max buffer size from /proc/sys/net/core/rmem_max.
+ */
+size_t getMaxBufferSize() {
+    std::ifstream file("/proc/sys/net/core/rmem_max");
+    int maxBufferSize = 0;
+    if (file) {
+        file >> maxBufferSize;
+    } else {
+        syslog(LOG_ALERT, "Could not open /proc/sys/net/core/rmem_max");
+    }
+    return maxBufferSize;
+}
+
+/**
  * @code dhcp_device_start_capture(snaplen, base, giaddr_ip);
  *
  * @brief starts packet capture on this interface
@@ -799,6 +817,16 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
         if (setsockopt(tx_sock, SOL_SOCKET, SO_ATTACH_FILTER, &dhcp_outbound_sock_bfp, sizeof(dhcp_outbound_sock_bfp)) != 0) {
             syslog(LOG_ALERT, "setsockopt: failed to attach filter with '%s'\n", strerror(errno));
             exit(1);
+        }
+
+        size_t maxBufferSize = getMaxBufferSize();
+        if (maxBufferSize == 0) {
+            syslog(LOG_ALERT, "dhcp_device_start_capture: failed to get max buffer size, using default");
+        }
+        else {
+            if (setsockopt(tx_sock, SOL_SOCKET, SO_RCVBUF, &maxBufferSize, sizeof(maxBufferSize)) == -1) {
+                syslog(LOG_ALERT, "setsockopt: failed to set rcvbuf size '%s'\n", strerror(errno));
+            }
         }
 
         rx_ev = event_new(base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
