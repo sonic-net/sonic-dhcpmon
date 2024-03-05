@@ -357,10 +357,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
     std::string context_if(context->intf);
 
     // count for incomming physical interfaces
-    if (context_if.compare(sock_if) != 0) {
-        increase_db_counter(sock_if, dhcp_option[2], dir);
-        return;
-    }
+    increase_db_counter(sock_if, dhcp_option[2], dir);
 
     switch (dhcp_option[2])
     {
@@ -377,7 +374,9 @@ static void handle_dhcp_option_53(std::string &sock_if,
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             // count for device context interfaces (-d -u -m)
-            increase_db_counter(context_if, dhcp_option[2], dir);
+            if (context_if.compare(sock_if) != 0) {
+                increase_db_counter(context_if, dhcp_option[2], dir);
+            }
         }
         break;
     // DHCP messages send by server
@@ -388,14 +387,16 @@ static void handle_dhcp_option_53(std::string &sock_if,
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            // count for device context interfaces (-d -u -m)
-            increase_db_counter(context_if, dhcp_option[2], dir);
+            if (context_if.compare(sock_if) != 0) {
+                increase_db_counter(context_if, dhcp_option[2], dir);
+            }
         }
         break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
-        // count for device context interfaces (-d -u -m)
-        increase_db_counter(context_if, dhcp_option[2], dir);
+        if (context_if.compare(sock_if) != 0) {
+            increase_db_counter(context_if, dhcp_option[2], dir);
+        }
         break;
     }
 }
@@ -506,14 +507,9 @@ static void read_tx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
+        context = interface_to_dev_context(devices, intf);
         if (context) {
             client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
-        } else {
-            context = interface_to_dev_context(devices, intf);
-            if (context) {
-                client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
-            }
         }
     }
 }
@@ -545,15 +541,10 @@ static void read_rx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
+        context = interface_to_dev_context(devices, intf);
         if (context) {
             client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
-        } else {
-            context = interface_to_dev_context(devices, intf);
-            if (context) {
-                client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
-            }
-        } 
+        }
     }
 }
 
