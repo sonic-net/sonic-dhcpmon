@@ -14,6 +14,8 @@
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <netinet/ether.h>
+#include <pcap.h>
+#include <pcap/sll.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
@@ -25,7 +27,6 @@
 #include <linux/filter.h>
 #include <netpacket/packet.h>
 #include "subscriberstatetable.h"
-#include "select.h"
 
 #include "dhcp_devman.h"
 #include "dhcp_device.h"
@@ -36,7 +37,7 @@
 /** Start of Ether header of a captured frame */
 #define ETHER_START_OFFSET  0
 /** Start of IP header of a captured frame */
-#define IP_START_OFFSET (ETHER_START_OFFSET + ETHER_HDR_LEN)
+#define IP_START_OFFSET (ETHER_START_OFFSET + sizeof(struct sll2_header))
 /** Start of UDP header of a captured frame */
 #define UDP_START_OFFSET (IP_START_OFFSET + sizeof(struct ip))
 /** Start of DHCP header of a captured frame */
@@ -80,82 +81,6 @@ std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
 uint64_t db_counter[DHCP_MESSAGE_TYPE_COUNT] = {};
 
 const std::string init_counter_str;
-
-/** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
- * This program is obtained using the following command tcpdump:
- * `tcpdump -dd "outbound and udp and (port 67 or port 68)"`
- */
-static struct sock_filter dhcp_outbound_bpf_code[] = {
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0xfffff004}, // (000) ldh      #fffff004
-    {.code = OP_JEQ,  .jt = 0,  .jf = 22, .k = 0x00000004}, // (001) jeq      #0x04            jt 0 jf 22
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x0000000c}, // (002) ldh      [12]
-    {.code = OP_JEQ,  .jt = 0,  .jf = 7,  .k = 0x000086dd}, // (003) jeq      #0x86dd          jt 2	jf 9
-    {.code = OP_LDB,  .jt = 0,  .jf = 0,  .k = 0x00000014}, // (004) ldb      [20]
-    {.code = OP_JEQ,  .jt = 0,  .jf = 18, .k = 0x00000011}, // (005) jeq      #0x11            jt 4	jf 22
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x00000036}, // (006) ldh      [54]
-    {.code = OP_JEQ,  .jt = 15, .jf = 0,  .k = 0x00000043}, // (007) jeq      #0x43            jt 21	jf 6
-    {.code = OP_JEQ,  .jt = 14, .jf = 0,  .k = 0x00000044}, // (008) jeq      #0x44            jt 21	jf 7
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x00000038}, // (009) ldh      [56]
-    {.code = OP_JEQ,  .jt = 12, .jf = 11, .k = 0x00000043}, // (010) jeq      #0x43            jt 21	jf 20
-    {.code = OP_JEQ,  .jt = 0,  .jf = 12, .k = 0x00000800}, // (011) jeq      #0x800           jt 10	jf 22
-    {.code = OP_LDB,  .jt = 0,  .jf = 0,  .k = 0x00000017}, // (012) ldb      [23]
-    {.code = OP_JEQ,  .jt = 0,  .jf = 10, .k = 0x00000011}, // (013) jeq      #0x11            jt 12	jf 22
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x00000014}, // (014) ldh      [20]
-    {.code = OP_JSET, .jt = 8,  .jf = 0,  .k = 0x00001fff}, // (015) jset     #0x1fff          jt 22	jf 14
-    {.code = OP_LDXB, .jt = 0,  .jf = 0,  .k = 0x0000000e}, // (016) ldxb     4*([14]&0xf)
-    {.code = OP_LDHI, .jt = 0,  .jf = 0,  .k = 0x0000000e}, // (017) ldh      [x + 14]
-    {.code = OP_JEQ,  .jt = 4,  .jf = 0,  .k = 0x00000043}, // (018) jeq      #0x43            jt 21	jf 17
-    {.code = OP_JEQ,  .jt = 3,  .jf = 0,  .k = 0x00000044}, // (019) jeq      #0x44            jt 21	jf 18
-    {.code = OP_LDHI, .jt = 0,  .jf = 0,  .k = 0x00000010}, // (020) ldh      [x + 16]
-    {.code = OP_JEQ,  .jt = 1,  .jf = 0,  .k = 0x00000043}, // (021) jeq      #0x43            jt 21	jf 20
-    {.code = OP_JEQ,  .jt = 0,  .jf = 1,  .k = 0x00000044}, // (022) jeq      #0x44            jt 21	jf 22
-    {.code = OP_RET,  .jt = 0,  .jf = 0,  .k = 0x00040000}, // (023) ret      #262144
-    {.code = OP_RET,  .jt = 0,  .jf = 0,  .k = 0x00000000}, // (024) ret      #0
-};
-
-/** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
- * This program is obtained using the following command tcpdump:
- * `tcpdump -dd "inbound and udp and (port 67 or port 68)"`
- */
-static struct sock_filter dhcp_inbound_bpf_code[] = {
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0xfffff004}, // (000) ldh      #fffff004
-    {.code = OP_JEQ,  .jt = 22, .jf = 0, .k = 0x00000004},  // (001) jeq      #0x04            jt 22 jf 0
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x0000000c}, // (002) ldh      [12]
-    {.code = OP_JEQ,  .jt = 0,  .jf = 7,  .k = 0x000086dd}, // (003) jeq      #0x86dd          jt 2	jf 9
-    {.code = OP_LDB,  .jt = 0,  .jf = 0,  .k = 0x00000014}, // (004) ldb      [20]
-    {.code = OP_JEQ,  .jt = 0,  .jf = 18, .k = 0x00000011}, // (005) jeq      #0x11            jt 4	jf 22
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x00000036}, // (006) ldh      [54]
-    {.code = OP_JEQ,  .jt = 15, .jf = 0,  .k = 0x00000043}, // (007) jeq      #0x43            jt 21	jf 6
-    {.code = OP_JEQ,  .jt = 14, .jf = 0,  .k = 0x00000044}, // (008) jeq      #0x44            jt 21	jf 7
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x00000038}, // (009) ldh      [56]
-    {.code = OP_JEQ,  .jt = 12, .jf = 11, .k = 0x00000043}, // (010) jeq      #0x43            jt 21	jf 20
-    {.code = OP_JEQ,  .jt = 0,  .jf = 12, .k = 0x00000800}, // (011) jeq      #0x800           jt 10	jf 22
-    {.code = OP_LDB,  .jt = 0,  .jf = 0,  .k = 0x00000017}, // (012) ldb      [23]
-    {.code = OP_JEQ,  .jt = 0,  .jf = 10, .k = 0x00000011}, // (013) jeq      #0x11            jt 12	jf 22
-    {.code = OP_LDHA, .jt = 0,  .jf = 0,  .k = 0x00000014}, // (014) ldh      [20]
-    {.code = OP_JSET, .jt = 8,  .jf = 0,  .k = 0x00001fff}, // (015) jset     #0x1fff          jt 22	jf 14
-    {.code = OP_LDXB, .jt = 0,  .jf = 0,  .k = 0x0000000e}, // (016) ldxb     4*([14]&0xf)
-    {.code = OP_LDHI, .jt = 0,  .jf = 0,  .k = 0x0000000e}, // (017) ldh      [x + 14]
-    {.code = OP_JEQ,  .jt = 4,  .jf = 0,  .k = 0x00000043}, // (018) jeq      #0x43            jt 21	jf 17
-    {.code = OP_JEQ,  .jt = 3,  .jf = 0,  .k = 0x00000044}, // (019) jeq      #0x44            jt 21	jf 18
-    {.code = OP_LDHI, .jt = 0,  .jf = 0,  .k = 0x00000010}, // (020) ldh      [x + 16]
-    {.code = OP_JEQ,  .jt = 1,  .jf = 0,  .k = 0x00000043}, // (021) jeq      #0x43            jt 21	jf 20
-    {.code = OP_JEQ,  .jt = 0,  .jf = 1,  .k = 0x00000044}, // (022) jeq      #0x44            jt 21	jf 22
-    {.code = OP_RET,  .jt = 0,  .jf = 0,  .k = 0x00040000}, // (023) ret      #262144
-    {.code = OP_RET,  .jt = 0,  .jf = 0,  .k = 0x00000000}, // (024) ret      #0
-};
-
-/** Filter program socket struct */
-static struct sock_fprog dhcp_outbound_sock_bfp = {
-    .len = sizeof(dhcp_outbound_bpf_code) / sizeof(*dhcp_outbound_bpf_code), .filter = dhcp_outbound_bpf_code
-};
-static struct sock_fprog dhcp_inbound_sock_bfp = {
-    .len = sizeof(dhcp_inbound_bpf_code) / sizeof(*dhcp_inbound_bpf_code), .filter = dhcp_inbound_bpf_code
-};
-
-static uint8_t *rx_recv_buffer = NULL;
-static uint8_t *tx_recv_buffer = NULL;
-static uint32_t snap_length;
 
 /** Aggregate device of DHCP interfaces. It contains aggregate counters from
     all interfaces
@@ -369,7 +294,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
                                   const u_char *dhcp_option,
                                   dhcp_packet_direction_t dir,
                                   struct ip *iphdr,
-                                  uint8_t *dhcphdr)
+                                  const uint8_t *dhcphdr)
 {
     in_addr_t giaddr;
     std::string context_if(context->intf);
@@ -432,12 +357,12 @@ static void handle_dhcp_option_53(std::string &sock_if,
  *
  * @return none
  */
-static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
+static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, const uint8_t *buffer,
                                   ssize_t buffer_sz, dhcp_packet_direction_t dir)
 {
     struct ip *iphdr = (struct ip*) (buffer + IP_START_OFFSET);
     struct udphdr *udp = (struct udphdr*) (buffer + UDP_START_OFFSET);
-    uint8_t *dhcphdr = buffer + DHCP_START_OFFSET;
+    const uint8_t *dhcphdr = buffer + DHCP_START_OFFSET;
     int dhcp_option_offset = DHCP_START_OFFSET + DHCP_OPTIONS_HEADER_SIZE;
 
     if (((unsigned)buffer_sz > UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) &&
@@ -496,82 +421,30 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
     return NULL;
 }
 
-
-/**
- * @code read_tx_callback(fd, event, arg);
- *
- * @brief callback for libevent which is called every time out in order to read queued outgoing packet capture
- *
- * @param fd            socket to read from
- * @param event         libevent triggered event
- * @param arg           user provided argument for callback (interface context)
- *
- * @return none
- */
-static void read_tx_callback(int fd, short event, void *arg)
+static void read_callback(int fd, short event, void *arg)
 {
-    auto devices = (std::unordered_map<std::string, struct intf*> *)arg;
-    ssize_t buffer_sz;
-    struct sockaddr_ll sll;
-    socklen_t slen = sizeof sll;
-    dhcp_device_context_t *context = NULL;
+    pcap_t *handle = (pcap_t*)arg;
+    struct pcap_pkthdr *packet_header;
+    const uint8_t *packet;
+    dhcp_device_context_t *context;
 
-    while ((buffer_sz = recvfrom(fd, tx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) 
-    {
+    while (pcap_next_ex(handle, &packet_header, &packet) > 0) {
+        struct sll2_header *sll2 = (struct sll2_header*)packet;
+
         char interfaceName[IF_NAMESIZE];
-        if (if_indextoname(sll.sll_ifindex, interfaceName) == NULL) {
-            syslog(LOG_WARNING, "invalid output interface index %d\n", sll.sll_ifindex);
-            continue;
+        if (if_indextoname(ntohl(sll2->sll2_if_index), interfaceName) == NULL) {
+            syslog(LOG_WARNING, "invalid output interface index %d\n", sll2->sll2_if_index);
+            return;
         }
         std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
-        if (context) {
-            client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
-        } else {
-            context = interface_to_dev_context(devices, intf);
-            if (context) {
-                client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
-            }
+        context = find_device_context(&intfs, intf);
+        if (!context) {
+            context = interface_to_dev_context(&intfs, intf);
         }
-    }
-}
-
-/**
- * @code read_rx_callback(fd, event, arg);
- *
- * @brief callback for libevent which is called every time out in order to read queued incoming packet capture
- *
- * @param fd            socket to read from
- * @param event         libevent triggered event
- * @param arg           user provided argument for callback (interface context)
- *
- * @return none
- */
-static void read_rx_callback(int fd, short event, void *arg)
-{
-    auto devices = (std::unordered_map<std::string, struct intf*> *)arg;
-    ssize_t buffer_sz;
-    struct sockaddr_ll sll;
-    socklen_t slen = sizeof(sll);
-    dhcp_device_context_t *context = NULL;
-
-    while ((buffer_sz = recvfrom(fd, rx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) 
-    {
-        char interfaceName[IF_NAMESIZE];
-        if (if_indextoname(sll.sll_ifindex, interfaceName) == NULL) {
-            syslog(LOG_WARNING, "invalid input interface index %d\n", sll.sll_ifindex);
-            continue;
-        }
-        std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
         if (context) {
-            client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
-        } else {
-            context = interface_to_dev_context(devices, intf);
-            if (context) {
-                client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
-            }
-        } 
+            client_packet_handler(intf, context, packet,
+                    packet_header->caplen, sll2->sll2_pkttype == LINUX_SLL_OUTGOING ? DHCP_TX : DHCP_RX);
+        }
     }
 }
 
@@ -744,71 +617,6 @@ static void dhcp_print_counters(const char *vlan_intf,
 }
 
 /**
- * @code init_socket();
- *
- * @brief initializes rx/tx sockets, bind it to interface and bpf program
- *
- * @return 0 on success, otherwise for failure
- */
-static int init_socket()
-{
-    int rv = -1;
-
-    do {
-        auto rx_sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
-        auto tx_sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
-        if (rx_sock < 0 || tx_sock < 0) {
-            syslog(LOG_ALERT, "socket: failed to open socket with '%s'\n", strerror(errno));
-            exit(1);
-        }
-
-        struct sockaddr_ll rx_addr;
-        memset(&rx_addr, 0, sizeof(rx_addr));
-        rx_addr.sll_ifindex = 0; // any interface
-        rx_addr.sll_family = AF_PACKET;
-        rx_addr.sll_protocol = htons(ETH_P_ALL);
-        if (bind(rx_sock, (struct sockaddr *) &rx_addr, sizeof(rx_addr))) {
-            syslog(LOG_ALERT, "bind: failed to bind to all interface with '%s'\n", strerror(errno));
-            break;
-        }
-
-        struct sockaddr_ll tx_addr;
-        memset(&tx_addr, 0, sizeof(tx_addr));
-        tx_addr.sll_ifindex = 0; // any interface
-        tx_addr.sll_family = AF_PACKET;
-        tx_addr.sll_protocol = htons(ETH_P_ALL);
-        if (bind(tx_sock, (struct sockaddr *) &tx_addr, sizeof(tx_addr))) {
-            syslog(LOG_ALERT, "bind: failed to bind to interface with '%s'\n", strerror(errno));
-            exit(1);
-        }
-
-        for (auto &itr : intfs) {
-            itr.second->dev_context->rx_sock = rx_sock;
-            itr.second->dev_context->tx_sock = tx_sock;
-        }
-        rv = 0;
-    } while (0);
-
-    return rv;
-}
-
-static void init_recv_buffers(int snaplen)
-{
-    snap_length = snaplen;
-    rx_recv_buffer = (uint8_t *) malloc(snaplen);
-    if (rx_recv_buffer == NULL) {
-        syslog(LOG_ALERT, "malloc: failed to allocate memory for socket rx buffer '%s'\n", strerror(errno));
-        exit(1);
-    }
-
-    tx_recv_buffer = (uint8_t *) malloc(snaplen);
-    if (tx_recv_buffer == NULL) {
-        syslog(LOG_ALERT, "malloc: failed to allocate memory for socket tx buffer '%s'\n", strerror(errno));
-        exit(1);
-    }
-}
-
-/**
  * @code initialize_intf_mac_and_ip_addr(context);
  *
  * @brief initializes device (interface) mac/ip addresses
@@ -928,9 +736,8 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
 int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t giaddr_ip)
 {
     int rv = -1;
-    struct event *rx_ev;
-    struct event *tx_ev;
-    int rx_sock = -1, tx_sock = -1;
+    struct event *ev;
+    int sock = -1;
 
     do {
         if (snaplen < UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) {
@@ -938,46 +745,55 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
-        init_socket();
+        pcap_t *handle;
+        char error_buffer[PCAP_ERRBUF_SIZE];
+        struct bpf_program filter;
 
-        init_recv_buffers(snaplen);
+        handle = pcap_open_live(NULL, snaplen, 0, 1000, error_buffer);
+        if (!handle) {
+            syslog(LOG_ALERT, "Could not open handle - %s\n", error_buffer);
+            exit(1);
+        }
+        if (pcap_setnonblock(handle, 1, error_buffer)) {
+            syslog(LOG_ALERT, "Unable to put handle in non-blocking mode - %s\n", error_buffer);
+            exit(1);
+        }
+        pcap_set_datalink(handle, DLT_LINUX_SLL2);
+        if (pcap_datalink(handle) != DLT_LINUX_SLL2) {
+            syslog(LOG_ALERT, "Datalink type must be DLT_LINUX_SLL2, but was instead %d\n", pcap_datalink(handle));
+            exit(1);
+        }
+        if (pcap_compile(handle, &filter, "udp and (port 67 or port 68)", 1, PCAP_NETMASK_UNKNOWN) == -1) {
+            syslog(LOG_ALERT, "Could not compile filter - %s\n", pcap_geterr(handle));
+            exit(1);
+        }
+        if (pcap_setfilter(handle, &filter) == -1) {
+            syslog(LOG_ALERT, "Could not set filter - %s\n", pcap_geterr(handle));
+            exit(1);
+        }
+        sock = pcap_get_selectable_fd(handle);
+        if (sock == -1) {
+            syslog(LOG_ALERT, "Could not get file descriptor - %s\n", pcap_geterr(handle));
+            exit(1);
+        }
+
+        for (auto &itr : intfs) {
+            itr.second->dev_context->rx_sock = sock;
+            itr.second->dev_context->tx_sock = sock;
+        }
 
         clear_counter(mStateDbPtr);
         update_vlan_mapping(mConfigDbPtr);
         update_portchannel_mapping(mConfigDbPtr);
         update_mgmt_mapping();
 
-        for (auto &itr : intfs) {
-            itr.second->dev_context->snaplen = snaplen;
-            itr.second->dev_context->giaddr_ip = giaddr_ip;
-            // all interface dev context has same rx/tx socket
-            rx_sock = itr.second->dev_context->rx_sock;
-            tx_sock = itr.second->dev_context->tx_sock;
-        }
+        ev = event_new(base, sock, EV_READ | EV_PERSIST, read_callback, handle);
 
-        if (rx_sock == -1 || tx_sock == -1) {
-            syslog(LOG_ALERT, "dhcp_device_start_capture: invalid rx_sock or tx_sock");
-            exit(1);
-        }
-        if (setsockopt(rx_sock, SOL_SOCKET, SO_ATTACH_FILTER, &dhcp_inbound_sock_bfp, sizeof(dhcp_inbound_sock_bfp)) != 0) {
-            syslog(LOG_ALERT, "setsockopt: failed to attach filter with '%s'\n", strerror(errno));
-            exit(1);
-        }
-
-        if (setsockopt(tx_sock, SOL_SOCKET, SO_ATTACH_FILTER, &dhcp_outbound_sock_bfp, sizeof(dhcp_outbound_sock_bfp)) != 0) {
-            syslog(LOG_ALERT, "setsockopt: failed to attach filter with '%s'\n", strerror(errno));
-            exit(1);
-        }
-
-        rx_ev = event_new(base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
-        tx_ev = event_new(base, tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
-
-        if (rx_ev == NULL || tx_ev == NULL) {
+        if (ev == NULL) {
             syslog(LOG_ALERT, "event_new: failed to allocate memory for libevent event '%s'\n", strerror(errno));
             exit(1);
         }
-        event_add(rx_ev, NULL);
-        event_add(tx_ev, NULL);
+        event_add(ev, NULL);
 
         rv = 0;
     } while (0);
