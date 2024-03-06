@@ -364,7 +364,7 @@ static void read_tx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
+        context = interface_to_dev_context(devices, intf);
         if (context) {
             client_packet_handler(context, tx_recv_buffer, buffer_sz, DHCP_TX);
         }
