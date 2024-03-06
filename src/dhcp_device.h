@@ -194,28 +194,4 @@ void dhcp_device_update_snapshot(dhcp_device_context_t *context);
  */
 void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type);
 
-/**
- * @code                void increase_db_counter(std::string &ifname)
- *
- * @brief               increase the counter in state_db with interface name
- *
- * @param ifname        interface name
- * 
- * @return              none
- */
-void initialize_db_counters(std::string &ifname);
-
-/**
- * @code                void increase_db_counter(std::string &ifname, uint8_t msg_type, dhcp_packet_direction_t dir)
- *
- * @brief               increase the counter in state_db with count of each DHCP message types
- *
- * @param ifname        interface name
- * @param type          dhcp message type to be increased in counter
- * @param dir           dhcp packet direction
- * 
- * @return              none
- */
-void increase_db_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
-
 #endif /* DHCP_DEVICE_H_ */
