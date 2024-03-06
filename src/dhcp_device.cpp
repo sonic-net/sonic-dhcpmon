@@ -194,25 +194,6 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     }
 }
 
-
-/**
- * @code clear_counter(std::shared_ptr<swss::DBConnector> state_db);
- *
- * @brief Clear all counter
- *
- * @param state_db      state_db connector pointer
- *
- */
-void clear_counter(std::shared_ptr<swss::DBConnector> state_db) {
-    std::string match_pattern = DB_COUNTER_TABLE + std::string("*");
-    auto keys = state_db->keys(match_pattern);
-
-    for (auto &itr : keys) {
-        state_db->del(itr);
-    }
-}
-
-
 /** update ethernet interface to port-channel map
  *  PORTCHANNEL_MEMBER|PortChannel101|Ethernet112
  */
@@ -284,6 +265,7 @@ void initialize_db_counters(std::string &ifname)
 {
     auto table_name = DB_COUNTER_TABLE + ifname;
     auto init_value = gen_counter_json_str(db_counter);
+    mStateDbPtr->del(table_name);
     mStateDbPtr->hset(table_name, "RX", init_value);
     mStateDbPtr->hset(table_name, "TX", init_value);
 }
@@ -942,7 +924,6 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
 
         init_recv_buffers(snaplen);
 
-        clear_counter(mStateDbPtr);
         update_vlan_mapping(mConfigDbPtr);
         update_portchannel_mapping(mConfigDbPtr);
         update_mgmt_mapping();
