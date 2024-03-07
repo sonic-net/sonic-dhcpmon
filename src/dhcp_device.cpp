@@ -709,6 +709,7 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
     if ((context != NULL) && (strlen(intf) < sizeof(dev_context->intf))) {
         dev_context = (dhcp_device_context_t *) malloc(sizeof(dhcp_device_context_t));
         if (dev_context != NULL) {
+            memset(dev_context, 0, sizeof(*dev_context));
             // set device name
             strncpy(dev_context->intf, intf, sizeof(dev_context->intf) - 1);
             dev_context->intf[sizeof(dev_context->intf) - 1] = '\0';
@@ -763,7 +764,7 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             syslog(LOG_ALERT, "Datalink type must be DLT_LINUX_SLL2, but was instead %d\n", pcap_datalink(handle));
             exit(1);
         }
-        if (pcap_compile(handle, &filter, "udp and (port 67 or port 68)", 1, PCAP_NETMASK_UNKNOWN) == -1) {
+        if (pcap_compile(handle, &filter, "ip and udp and (port 67 or port 68)", 1, PCAP_NETMASK_UNKNOWN) == -1) {
             syslog(LOG_ALERT, "Could not compile filter - %s\n", pcap_geterr(handle));
             exit(1);
         }
@@ -778,6 +779,9 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
         }
 
         for (auto &itr : intfs) {
+            itr.second->dev_context->snaplen = snaplen;
+            itr.second->dev_context->giaddr_ip = giaddr_ip;
+            // all interface dev context has same rx/tx socket
             itr.second->dev_context->rx_sock = sock;
             itr.second->dev_context->tx_sock = sock;
         }
