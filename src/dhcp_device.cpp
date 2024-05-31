@@ -9,7 +9,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <algorithm>
 #include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
@@ -19,7 +18,6 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <syslog.h>
-#include <jsoncpp/json/json.h>
 #include <inttypes.h>
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
@@ -45,8 +43,7 @@
 #define DHCP_OPTIONS_HEADER_SIZE 240
 /** Offset of DHCP GIADDR */
 #define DHCP_GIADDR_OFFSET 24
-/* STATE_DB DHCP counter table name */
-#define DB_COUNTER_TABLE "DHCP_COUNTER_TABLE|"
+#define CLIENT_IF_PREFIX "Ethernet"
 
 #define OP_LDHA     (BPF_LD  | BPF_H   | BPF_ABS)   /** bpf ldh Abs */
 #define OP_LDHI     (BPF_LD  | BPF_H   | BPF_IND)   /** bpf ldh Ind */
@@ -60,8 +57,8 @@
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0);
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
-    mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
-);
+            mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
+        );
 
 /* interface to vlan mapping */
 std::unordered_map<std::string, std::string> vlan_map;
@@ -71,15 +68,6 @@ std::unordered_map<std::string, std::string> portchan_map;
 
 /* interface to mgmt port mapping */
 std::unordered_map<std::string, std::string> mgmt_map;
-
-/* db counter name array, message type rage [1, 8] */
-std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
-    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"
-};
-/* db counter init value in uint64_t */
-uint64_t db_counter[DHCP_MESSAGE_TYPE_COUNT] = {};
-
-const std::string init_counter_str;
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
  * This program is obtained using the following command tcpdump:
@@ -176,42 +164,15 @@ static dhcp_message_type_t monitored_msgs[] = {
 void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("VLAN_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
-    std::unordered_map<std::string, bool> vlans;
     for (auto &itr : keys) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto vlan = itr.substr(first + 1, second - first - 1);
         auto interface = itr.substr(second + 1);
         vlan_map[interface] = vlan;
-        vlans[vlan] = true;
         syslog(LOG_INFO, "add <%s, %s> into interface vlan map\n", interface.c_str(), vlan.c_str());
-        std::string ifname = interface;
-        initialize_db_counters(ifname);
-    }
-    for (auto &itr : vlans) {
-        std::string ifname = itr.first;
-        initialize_db_counters(ifname);
     }
 }
-
-
-/**
- * @code clear_counter(std::shared_ptr<swss::DBConnector> state_db);
- *
- * @brief Clear all counter
- *
- * @param state_db      state_db connector pointer
- *
- */
-void clear_counter(std::shared_ptr<swss::DBConnector> state_db) {
-    std::string match_pattern = DB_COUNTER_TABLE + std::string("*");
-    auto keys = state_db->keys(match_pattern);
-
-    for (auto &itr : keys) {
-        state_db->del(itr);
-    }
-}
-
 
 /** update ethernet interface to port-channel map
  *  PORTCHANNEL_MEMBER|PortChannel101|Ethernet112
@@ -219,21 +180,13 @@ void clear_counter(std::shared_ptr<swss::DBConnector> state_db) {
 void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("PORTCHANNEL_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
-    std::unordered_map<std::string, bool> portchannels;
     for (auto &itr : keys) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto portchannel = itr.substr(first + 1, second - first - 1);
         auto interface = itr.substr(second + 1);
         portchan_map[interface] = portchannel;
-        portchannels[portchannel] = true;
         syslog(LOG_INFO, "add <%s, %s> into interface port-channel map\n", interface.c_str(), portchannel.c_str());
-        std::string ifname = interface;
-        initialize_db_counters(ifname);
-    }
-    for (auto &itr : portchannels) {
-        std::string ifname = itr.first;
-        initialize_db_counters(ifname);
     }
 }
 
@@ -244,98 +197,6 @@ void update_mgmt_mapping() {
     if (mgmt) {
         auto name = std::string(mgmt->intf);
         mgmt_map[name] = name;
-        initialize_db_counters(name);
-    }
-}
-
-/**
- * @code                void gen_counter_json_str()
- *
- * @brief               generate counter json string based on the value in counters array
- *
- * @return              counter json string
- */
-std::string gen_counter_json_str(uint64_t *counters) {
-    std::string init_value;
-
-    init_value.append("{");
-    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
-        auto value = std::to_string(counters[i]);
-        auto json_str = "'" + db_counter_name[i] + "'"+ ":" + "'" + value + "'";
-        init_value.append(json_str);
-        if (i + 1 < DHCP_MESSAGE_TYPE_COUNT) {
-            init_value.append(",");
-        }
-    }
-    init_value.append("}");
-    return init_value;
-}
-
-/**
- * @code                void increase_db_counter(std::string &ifname)
- *
- * @brief               increase the counter in state_db with interface name
- *
- * @param ifname        interface name
- * 
- * @return              none
- */
-void initialize_db_counters(std::string &ifname)
-{
-    auto table_name = DB_COUNTER_TABLE + ifname;
-    auto init_value = gen_counter_json_str(db_counter);
-    mStateDbPtr->hset(table_name, "RX", init_value);
-    mStateDbPtr->hset(table_name, "TX", init_value);
-}
-
-/**
- * @code                void increase_db_counter(std::string &ifname, uint8_t msg_type, dhcp_packet_direction_t dir)
- *
- * @brief               increase the counter in state_db with count of each DHCP message types
- *
- * @param ifname        interface name
- * @param type          dhcp message type to be increased in counter
- * @param dir           dhcp packet direction
- * 
- * @return              none
- */
-void increase_db_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir) {
-    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
-        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
-        type = 0; // treate it as unknown counter
-    }
-    std::string table_name = DB_COUNTER_TABLE + ifname;
-    std::string msg_type = db_counter_name[type];
-    auto counters_json = mStateDbPtr->hget(table_name, (dir == DHCP_RX) ? "RX" : "TX");
-    if (counters_json == nullptr) {
-        db_counter[type] = 1;
-        auto json_string = gen_counter_json_str(db_counter);
-        mStateDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", json_string);
-        db_counter[type] = 0;
-    } else {
-        Json::Value root;
-        Json::CharReaderBuilder builder;
-        Json::StreamWriterBuilder wbuilder;
-        JSONCPP_STRING err;
-
-        std::replace(counters_json.get()->begin(), counters_json.get()->end(), '\'', '\"');
-        auto json_begin = counters_json.get()->c_str();
-        auto json_end = json_begin + counters_json.get()->length();
-        const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-        if (reader->parse(json_begin, json_end, &root, &err)) {
-            if (root.isMember(msg_type)) {
-                std::string cnt_string = root[msg_type].asString();
-                auto cnt = std::stoull(cnt_string) + 1;
-                root[msg_type] = Json::Value(std::to_string(cnt));
-            } else {
-                root[msg_type] = Json::Value(std::to_string(1));
-            }
-            wbuilder["indentation"] = ""; // whitespace-less output
-            const std::string document = Json::writeString(wbuilder, root);
-            mStateDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", document);
-        } else {
-            syslog(LOG_WARNING, "failed to parse counter json: %s, %s", json_begin, err.c_str());
-        }
     }
 }
 
@@ -355,7 +216,6 @@ static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msg
  *
  * @brief handle the logic related to DHCP option 53
  *
- * @param src_if        Source pyhsical interface name
  * @param context       Device (interface) context
  * @param dhcp_option   pointer to DHCP option buffer space
  * @param dir           packet direction
@@ -364,22 +224,13 @@ static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msg
  *
  * @return none
  */
-static void handle_dhcp_option_53(std::string &sock_if,
-                                  dhcp_device_context_t *context,
+static void handle_dhcp_option_53(dhcp_device_context_t *context,
                                   const u_char *dhcp_option,
                                   dhcp_packet_direction_t dir,
                                   struct ip *iphdr,
                                   uint8_t *dhcphdr)
 {
     in_addr_t giaddr;
-    std::string context_if(context->intf);
-
-    // count for incomming physical interfaces
-    if (context_if.compare(sock_if) != 0) {
-        increase_db_counter(sock_if, dhcp_option[2], dir);
-        return;
-    }
-
     switch (dhcp_option[2])
     {
     // DHCP messages send by client
@@ -394,8 +245,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
             (!context->is_uplink && dir == DHCP_RX && iphdr->ip_dst.s_addr == INADDR_BROADCAST)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            // count for device context interfaces (-d -u -m)
-            increase_db_counter(context_if, dhcp_option[2], dir);
         }
         break;
     // DHCP messages send by server
@@ -406,33 +255,25 @@ static void handle_dhcp_option_53(std::string &sock_if,
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            // count for device context interfaces (-d -u -m)
-            increase_db_counter(context_if, dhcp_option[2], dir);
         }
         break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
-        // count for device context interfaces (-d -u -m)
-        increase_db_counter(context_if, dhcp_option[2], dir);
         break;
     }
 }
 
 /**
- * @code client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
- *                             ssize_t buffer_sz, dhcp_packet_direction_t dir);
+ * @code client_packet_handler(dhcp_device_context_t *context, ssize_t buffer_sz);
  *
  * @brief packet handler to process received rx and tx packets
  *
- * @param sock_if       socket interface
  * @param context       pointer to device (interface) context
- * @param buffer        DHCP packet
  * @param buffer_sz     buffer that stores received packet data
- * @param dir           DHCP packet direction
  *
  * @return none
  */
-static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
+static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffer,
                                   ssize_t buffer_sz, dhcp_packet_direction_t dir)
 {
     struct ip *iphdr = (struct ip*) (buffer + IP_START_OFFSET);
@@ -452,7 +293,7 @@ static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *c
         while ((offset < (dhcp_option_sz + 1)) && dhcp_option[offset] != 255) {
             if (dhcp_option[offset] == OPTION_DHCP_MESSAGE_TYPE) {
                 if (offset < (dhcp_option_sz + 2)) {
-                    handle_dhcp_option_53(sock_if, context, &dhcp_option[offset], dir, iphdr, dhcphdr);
+                    handle_dhcp_option_53(context, &dhcp_option[offset], dir, iphdr, dhcphdr);
                 }
                 break; // break while loop since we are only interested in Option 53
             }
@@ -490,7 +331,6 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
             if (mgmt != mgmt_map.end()) {
                 return find_device_context(devices, mgmt->second);
             }
-            return find_device_context(devices, ifname);
         }
     }
     return NULL;
@@ -526,12 +366,7 @@ static void read_tx_callback(int fd, short event, void *arg)
         std::string intf(interfaceName);
         context = find_device_context(devices, intf);
         if (context) {
-            client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
-        } else {
-            context = interface_to_dev_context(devices, intf);
-            if (context) {
-                client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
-            }
+            client_packet_handler(context, tx_recv_buffer, buffer_sz, DHCP_TX);
         }
     }
 }
@@ -563,15 +398,10 @@ static void read_rx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
+        context = interface_to_dev_context(devices, intf);
         if (context) {
-            client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
-        } else {
-            context = interface_to_dev_context(devices, intf);
-            if (context) {
-                client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
-            }
-        } 
+            client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
+        }
     }
 }
 
@@ -942,7 +772,6 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
 
         init_recv_buffers(snaplen);
 
-        clear_counter(mStateDbPtr);
         update_vlan_mapping(mConfigDbPtr);
         update_portchannel_mapping(mConfigDbPtr);
         update_mgmt_mapping();
