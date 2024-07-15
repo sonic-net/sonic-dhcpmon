@@ -780,25 +780,14 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
-        // in init_socket it done below:
-        // for (auto &itr : intfs) {
-        //     itr.second->dev_context->rx_sock = rx_sock;
-        //     itr.second->dev_context->tx_sock = tx_sock;
-        // }
         init_socket();
 
         init_recv_buffers(snaplen);
 
-        // Done in update_vlan_mapping
-        // vlan_map[interface] = vlan;
         update_vlan_mapping(mConfigDbPtr);
 
-        // Done in update_portchannel_mapping
-        // portchan_map[interface] = portchannel;
         update_portchannel_mapping(mConfigDbPtr);
 
-        // Done in update_mgmt_mapping
-        // mgmt_map[name] = name;
         update_mgmt_mapping();
 
         for (auto &itr : intfs) {
