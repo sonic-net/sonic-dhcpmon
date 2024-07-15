@@ -288,6 +288,7 @@ static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffe
     if (((unsigned)buffer_sz > UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) &&
         (ntohs(udp->len) > DHCP_OPTIONS_HEADER_SIZE))
     {
+        syslog(LOG_ALERT, "Got dhcp packet with direction %s on intf %s\n", dir == DHCP_RX ? "RX" : "TX", context->intf);
         int dhcp_sz = ntohs(udp->len) < buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr) ?
                     ntohs(udp->len) : buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr);
         int dhcp_option_sz = dhcp_sz - DHCP_OPTIONS_HEADER_SIZE;
