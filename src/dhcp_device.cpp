@@ -239,7 +239,7 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
     case DHCP_MESSAGE_TYPE_DECLINE:
     case DHCP_MESSAGE_TYPE_RELEASE:
     case DHCP_MESSAGE_TYPE_INFORM:
-        syslog(LOG_ALERT, "Got client packet with direction %s on intf %s\n", dir, context->intf);
+        syslog(LOG_ALERT, "Got client packet with direction %s on intf %s\n", dir == DHCP_RX ? "RX" : "TX", context->intf);
         giaddr = ntohl(dhcphdr[DHCP_GIADDR_OFFSET] << 24 | dhcphdr[DHCP_GIADDR_OFFSET + 1] << 16 |
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
@@ -253,7 +253,7 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
     case DHCP_MESSAGE_TYPE_OFFER:
     case DHCP_MESSAGE_TYPE_ACK:
     case DHCP_MESSAGE_TYPE_NAK:
-        syslog(LOG_ALERT, "Got server packet with direction %son intf %s\n", dir, context->intf);
+        syslog(LOG_ALERT, "Got server packet with direction %s on intf %s\n", dir == DHCP_RX ? "RX" : "TX", context->intf);
         if ((context->giaddr_ip == iphdr->ip_dst.s_addr && context->is_uplink && dir == DHCP_RX) ||
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
