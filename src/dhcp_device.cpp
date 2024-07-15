@@ -239,22 +239,26 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
     case DHCP_MESSAGE_TYPE_DECLINE:
     case DHCP_MESSAGE_TYPE_RELEASE:
     case DHCP_MESSAGE_TYPE_INFORM:
+        syslog(LOG_ALERT, "Got client packet with direction %s on intf %s\n", dir, context->intf);
         giaddr = ntohl(dhcphdr[DHCP_GIADDR_OFFSET] << 24 | dhcphdr[DHCP_GIADDR_OFFSET + 1] << 16 |
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
             (!context->is_uplink && dir == DHCP_RX && iphdr->ip_dst.s_addr == INADDR_BROADCAST)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            syslog(LOG_ALERT, "Counter++ for %s", context->intf);
         }
         break;
     // DHCP messages send by server
     case DHCP_MESSAGE_TYPE_OFFER:
     case DHCP_MESSAGE_TYPE_ACK:
     case DHCP_MESSAGE_TYPE_NAK:
+        syslog(LOG_ALERT, "Got server packet with direction %son intf %s\n", dir, context->intf);
         if ((context->giaddr_ip == iphdr->ip_dst.s_addr && context->is_uplink && dir == DHCP_RX) ||
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            syslog(LOG_ALERT, "Counter++ for %s", context->intf);
         }
         break;
     default:
@@ -585,6 +589,14 @@ static int init_socket()
     int rv = -1;
 
     do {
+        // https://www.man7.org/linux/man-pages/man2/socket.2.html
+        // AF_PACKET means: Low-level packet interface 
+        // SOCK_NONBLOCK
+            //   Set the O_NONBLOCK file status flag on the open file
+            //   description (see open(2)) referred to by the new file
+            //   descriptor.  Using this flag saves extra calls to fcntl(2)
+            //   to achieve the same result.
+        // When protocol is set to htons(ETH_P_ALL), then all protocols are received.
         auto rx_sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
         auto tx_sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
         if (rx_sock < 0 || tx_sock < 0) {
@@ -768,12 +780,25 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
+        // in init_socket it done below:
+        // for (auto &itr : intfs) {
+        //     itr.second->dev_context->rx_sock = rx_sock;
+        //     itr.second->dev_context->tx_sock = tx_sock;
+        // }
         init_socket();
 
         init_recv_buffers(snaplen);
 
+        // Done in update_vlan_mapping
+        // vlan_map[interface] = vlan;
         update_vlan_mapping(mConfigDbPtr);
+
+        // Done in update_portchannel_mapping
+        // portchan_map[interface] = portchannel;
         update_portchannel_mapping(mConfigDbPtr);
+
+        // Done in update_mgmt_mapping
+        // mgmt_map[name] = name;
         update_mgmt_mapping();
 
         for (auto &itr : intfs) {
