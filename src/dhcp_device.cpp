@@ -372,8 +372,6 @@ static void read_tx_callback(int fd, short event, void *arg)
         context = find_device_context(devices, intf);
         if (context) {
             client_packet_handler(context, tx_recv_buffer, buffer_sz, DHCP_TX);
-        } else {
-            syslog(LOG_WARNING, "context not found for interface %s\n", interfaceName);
         }
     }
 }
@@ -406,10 +404,11 @@ static void read_rx_callback(int fd, short event, void *arg)
         }
         std::string intf(interfaceName);
         context = interface_to_dev_context(devices, intf);
+        if (!context) {
+            context = find_device_context(devices, intf);
+        }
         if (context) {
             client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
-        } else {
-            syslog(LOG_WARNING, "context not found for interface %s\n", interfaceName);
         }
     }
 }
