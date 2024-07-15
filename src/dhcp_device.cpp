@@ -589,14 +589,6 @@ static int init_socket()
     int rv = -1;
 
     do {
-        // https://www.man7.org/linux/man-pages/man2/socket.2.html
-        // AF_PACKET means: Low-level packet interface 
-        // SOCK_NONBLOCK
-            //   Set the O_NONBLOCK file status flag on the open file
-            //   description (see open(2)) referred to by the new file
-            //   descriptor.  Using this flag saves extra calls to fcntl(2)
-            //   to achieve the same result.
-        // When protocol is set to htons(ETH_P_ALL), then all protocols are received.
         auto rx_sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
         auto tx_sock = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
         if (rx_sock < 0 || tx_sock < 0) {
