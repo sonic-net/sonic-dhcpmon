@@ -239,26 +239,22 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
     case DHCP_MESSAGE_TYPE_DECLINE:
     case DHCP_MESSAGE_TYPE_RELEASE:
     case DHCP_MESSAGE_TYPE_INFORM:
-        syslog(LOG_ALERT, "Got client packet with direction %s on intf %s\n", dir == DHCP_RX ? "RX" : "TX", context->intf);
         giaddr = ntohl(dhcphdr[DHCP_GIADDR_OFFSET] << 24 | dhcphdr[DHCP_GIADDR_OFFSET + 1] << 16 |
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
             (!context->is_uplink && dir == DHCP_RX && iphdr->ip_dst.s_addr == INADDR_BROADCAST)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            syslog(LOG_ALERT, "Counter++ for %s", context->intf);
         }
         break;
     // DHCP messages send by server
     case DHCP_MESSAGE_TYPE_OFFER:
     case DHCP_MESSAGE_TYPE_ACK:
     case DHCP_MESSAGE_TYPE_NAK:
-        syslog(LOG_ALERT, "Got server packet with direction %s on intf %s\n", dir == DHCP_RX ? "RX" : "TX", context->intf);
         if ((context->giaddr_ip == iphdr->ip_dst.s_addr && context->is_uplink && dir == DHCP_RX) ||
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            syslog(LOG_ALERT, "Counter++ for %s", context->intf);
         }
         break;
     default:
@@ -288,7 +284,6 @@ static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffe
     if (((unsigned)buffer_sz > UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) &&
         (ntohs(udp->len) > DHCP_OPTIONS_HEADER_SIZE))
     {
-        syslog(LOG_ALERT, "Got dhcp packet with direction %s on intf %s\n", dir == DHCP_RX ? "RX" : "TX", context->intf);
         int dhcp_sz = ntohs(udp->len) < buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr) ?
                     ntohs(udp->len) : buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr);
         int dhcp_option_sz = dhcp_sz - DHCP_OPTIONS_HEADER_SIZE;
@@ -403,10 +398,7 @@ static void read_rx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = interface_to_dev_context(devices, intf);
-        if (!context) {
-            context = find_device_context(devices, intf);
-        }
+        context = find_device_context(devices, intf);
         if (context) {
             client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
         }
@@ -781,9 +773,7 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
         init_recv_buffers(snaplen);
 
         update_vlan_mapping(mConfigDbPtr);
-
         update_portchannel_mapping(mConfigDbPtr);
-
         update_mgmt_mapping();
 
         for (auto &itr : intfs) {
