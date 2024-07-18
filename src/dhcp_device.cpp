@@ -63,8 +63,14 @@ std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table>
 /* interface to vlan mapping */
 std::unordered_map<std::string, std::string> vlan_map;
 
+/*vlan name set */
+std::set<std::string> vlan_set;
+
 /* interface to port-channel mapping */
 std::unordered_map<std::string, std::string> portchan_map;
+
+/*port-channel name set */
+std::set<std::string> portchan_set;
 
 /* interface to mgmt port mapping */
 std::unordered_map<std::string, std::string> mgmt_map;
@@ -161,7 +167,7 @@ static dhcp_message_type_t monitored_msgs[] = {
 /** update ethernet interface to vlan map
  *  VLAN_MEMBER|Vlan1000|Ethernet48
  */
-void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
+void update_vlan_mapping_and_set(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("VLAN_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
     for (auto &itr : keys) {
@@ -171,13 +177,17 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         auto interface = itr.substr(second + 1);
         vlan_map[interface] = vlan;
         syslog(LOG_INFO, "add <%s, %s> into interface vlan map\n", interface.c_str(), vlan.c_str());
+        auto ret = vlan_set.insert(vlan);
+        if (ret.second) {
+            syslog(LOG_ERR, "add vlan %s into vlan set\n", vlan.c_str());
+        }
     }
 }
 
 /** update ethernet interface to port-channel map
  *  PORTCHANNEL_MEMBER|PortChannel101|Ethernet112
  */
-void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
+void update_portchannel_mapping_and_set(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("PORTCHANNEL_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
     for (auto &itr : keys) {
@@ -187,6 +197,10 @@ void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         auto interface = itr.substr(second + 1);
         portchan_map[interface] = portchannel;
         syslog(LOG_INFO, "add <%s, %s> into interface port-channel map\n", interface.c_str(), portchannel.c_str());
+        auto ret = portchan_set.insert(portchannel);
+        if (ret.second) {
+            syslog(LOG_ERR, "add port-channel %s into port-channel set\n", portchannel.c_str());
+        }
     }
 }
 
@@ -330,6 +344,9 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
             auto mgmt = mgmt_map.find(ifname);
             if (mgmt != mgmt_map.end()) {
                 return find_device_context(devices, mgmt->second);
+            } else if (vlan_set.find(ifname) == vlan_set.end() ||
+                       portchan_set.find(ifname) == portchan_set.end()) {
+                return find_device_context(devices, ifname);
             }
         }
     }
@@ -398,7 +415,7 @@ static void read_rx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = find_device_context(devices, intf);
+        context = interface_to_dev_context(devices, intf);
         if (context) {
             client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
         }
@@ -772,8 +789,8 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
 
         init_recv_buffers(snaplen);
 
-        update_vlan_mapping(mConfigDbPtr);
-        update_portchannel_mapping(mConfigDbPtr);
+        update_vlan_mapping_and_set(mConfigDbPtr);
+        update_portchannel_mapping_and_set(mConfigDbPtr);
         update_mgmt_mapping();
 
         for (auto &itr : intfs) {
