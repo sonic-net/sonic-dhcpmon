@@ -179,7 +179,7 @@ void update_vlan_mapping_and_set(std::shared_ptr<swss::DBConnector> db_conn) {
         syslog(LOG_INFO, "add <%s, %s> into interface vlan map\n", interface.c_str(), vlan.c_str());
         auto ret = vlan_set.insert(vlan);
         if (ret.second) {
-            syslog(LOG_ERR, "add vlan %s into vlan set\n", vlan.c_str());
+            syslog(LOG_INFO, "add vlan %s into vlan set\n", vlan.c_str());
         }
     }
 }
@@ -199,7 +199,7 @@ void update_portchannel_mapping_and_set(std::shared_ptr<swss::DBConnector> db_co
         syslog(LOG_INFO, "add <%s, %s> into interface port-channel map\n", interface.c_str(), portchannel.c_str());
         auto ret = portchan_set.insert(portchannel);
         if (ret.second) {
-            syslog(LOG_ERR, "add port-channel %s into port-channel set\n", portchannel.c_str());
+            syslog(LOG_INFO, "add port-channel %s into port-channel set\n", portchannel.c_str());
         }
     }
 }
@@ -344,7 +344,7 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
             auto mgmt = mgmt_map.find(ifname);
             if (mgmt != mgmt_map.end()) {
                 return find_device_context(devices, mgmt->second);
-            } else if (vlan_set.find(ifname) == vlan_set.end() ||
+            } else if (vlan_set.find(ifname) == vlan_set.end() &&
                        portchan_set.find(ifname) == portchan_set.end()) {
                 return find_device_context(devices, ifname);
             }
