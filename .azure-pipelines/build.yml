@@ -52,15 +52,16 @@ jobs:
       project: build
       pipeline: Azure.sonic-buildimage.common_libs
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      # common_libs doesn't support for building bookworm libs, hence we use 202411
+      runBranch: 'refs/heads/202411'
       path: $(Build.ArtifactStagingDirectory)/download
       ${{ if eq(parameters.arch, 'amd64') }}:
         artifact: common-lib
       ${{ else }}:
         artifact: common-lib.${{ parameters.arch }}
       patterns: |
-        target/debs/bullseye/libyang-*.deb
-        target/debs/bullseye/libyang_*.deb
+        target/debs/bookworm/libyang-*.deb
+        target/debs/bookworm/libyang_*.deb
     displayName: "Download libyang from common lib"
   - script: |
       set -ex
@@ -73,11 +74,11 @@ jobs:
       project: build
       pipeline: Azure.sonic-swss-common
       ${{ if eq(parameters.arch, 'amd64') }}:
-        artifact: sonic-swss-common
+        artifact: sonic-swss-common-bookworm
       ${{ else }}:
-        artifact: sonic-swss-common.${{ parameters.arch }}
+        artifact: sonic-swss-common-bookworm.${{ parameters.arch }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/202405'
       displayName: "Download sonic-swss-common"
   - script: |
       set -ex
