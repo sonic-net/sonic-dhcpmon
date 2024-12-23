@@ -26,3 +26,4 @@ jobs:
     arch: armhf
     pool: sonicbld-armhf
     containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bullseye-armhf:latest
+
