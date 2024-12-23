@@ -59,8 +59,8 @@ jobs:
       ${{ else }}:
         artifact: common-lib.${{ parameters.arch }}
       patterns: |
-        target/debs/bullseye/libyang-*.deb
-        target/debs/bullseye/libyang_*.deb
+        target/debs/bookworm/libyang-*.deb
+        target/debs/bookworm/libyang_*.deb
     displayName: "Download libyang from common lib"
   - script: |
       set -ex
@@ -73,9 +73,9 @@ jobs:
       project: build
       pipeline: Azure.sonic-swss-common
       ${{ if eq(parameters.arch, 'amd64') }}:
-        artifact: sonic-swss-common
+        artifact: sonic-swss-common-bookworm
       ${{ else }}:
-        artifact: sonic-swss-common.${{ parameters.arch }}
+        artifact: sonic-swss-common-bookworm.${{ parameters.arch }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       displayName: "Download sonic-swss-common"
