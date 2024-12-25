@@ -218,4 +218,14 @@ void initialize_db_counters(std::string &ifname);
  */
 void increase_db_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
 
+/**
+ * Initialize cache counter
+ */
+void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+
+/**
+ * Increase cache counter
+ */
+void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
+
 #endif /* DHCP_DEVICE_H_ */

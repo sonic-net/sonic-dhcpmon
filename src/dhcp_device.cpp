@@ -72,6 +72,15 @@ std::unordered_map<std::string, std::string> portchan_map;
 /* interface to mgmt port mapping */
 std::unordered_map<std::string, std::string> mgmt_map;
 
+/* RX per-interface counter data */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> rx_counter;
+
+/* RX per-interface counter data */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counter;
+
+/* Indicate whether cache counter change */
+bool is_counter_increased = false;
+
 /* db counter name array, message type rage [1, 8] */
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"
@@ -187,13 +196,36 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         syslog(LOG_INFO, "add <%s, %s> into interface vlan map\n", interface.c_str(), vlan.c_str());
         std::string ifname = interface;
         initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
     }
     for (auto &itr : vlans) {
         std::string ifname = itr.first;
         initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
     }
 }
 
+
+/**
+ * Initialize cache counter
+ */
+void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name) {
+    auto counter = counters.find(interface_name);
+    if (counter != counters.end()) {
+        return;
+    }
+
+    std::unordered_map<uint8_t, uint64_t> new_counter;
+    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+        new_counter[i] = 0;
+    }
+
+    counters[interface_name] = new_counter;
+}
 
 /**
  * @code clear_counter(std::shared_ptr<swss::DBConnector> state_db);
@@ -230,10 +262,16 @@ void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         syslog(LOG_INFO, "add <%s, %s> into interface port-channel map\n", interface.c_str(), portchannel.c_str());
         std::string ifname = interface;
         initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
     }
     for (auto &itr : portchannels) {
         std::string ifname = itr.first;
         initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
     }
 }
 
@@ -245,6 +283,9 @@ void update_mgmt_mapping() {
         auto name = std::string(mgmt->intf);
         mgmt_map[name] = name;
         initialize_db_counters(name);
+
+        initialize_cache_counter(rx_counter, name);
+        initialize_cache_counter(tx_counter, name);
     }
 }
 
@@ -339,6 +380,24 @@ void increase_db_counter(std::string &ifname, uint8_t type, dhcp_packet_directio
     }
 }
 
+/**
+ * Increase cache counter
+ */
+void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir) {
+    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
+        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
+        type = 0; // treate it as unknown counter
+    }
+    auto &counter_map = (dir == DHCP_RX) ? rx_counter : tx_counter;
+    auto counter = counter_map.find(ifname);
+    if (counter == counter_map.end()) {
+        syslog(LOG_WARNING, "Cannot find %s counter for %s\n", (dir == DHCP_RX ? "RX" : "TX"), ifname.c_str());
+        return;
+    }
+    is_counter_increased = true;
+    counter->second[type]++;
+}
+
 dhcp_device_context_t *find_device_context(std::unordered_map<std::string, struct intf*> *intfs, std::string if_name) {
     auto intf = intfs->find(if_name);
     if (intf == intfs->end()) {
@@ -377,6 +436,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
     // count for incomming physical interfaces
     if (context_if.compare(sock_if) != 0) {
         increase_db_counter(sock_if, dhcp_option[2], dir);
+        increase_cache_counter(sock_if, dhcp_option[2], dir);
         return;
     }
 
@@ -396,6 +456,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             // count for device context interfaces (-d -u -m)
             increase_db_counter(context_if, dhcp_option[2], dir);
+            increase_cache_counter(context_if, dhcp_option[2], dir);
         }
         break;
     // DHCP messages send by server
@@ -408,12 +469,14 @@ static void handle_dhcp_option_53(std::string &sock_if,
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             // count for device context interfaces (-d -u -m)
             increase_db_counter(context_if, dhcp_option[2], dir);
+            increase_cache_counter(context_if, dhcp_option[2], dir);
         }
         break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
         // count for device context interfaces (-d -u -m)
         increase_db_counter(context_if, dhcp_option[2], dir);
+        increase_cache_counter(context_if, dhcp_option[2], dir);
         break;
     }
 }
