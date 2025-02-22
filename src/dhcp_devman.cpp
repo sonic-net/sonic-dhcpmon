@@ -47,6 +47,16 @@ dhcp_device_context_t* dhcp_devman_get_agg_dev()
 }
 
 /**
+ * @code dhcp_devman_get_counter(dhcp_packet_direction_t dir);
+ *
+ * Accessor method
+ */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_devman_get_counter(dhcp_packet_direction_t dir)
+{
+    return dhcp_device_get_counter(dir);
+}
+
+/**
  * @code dhcp_devman_get_mgmt_dev();
  *
  * Accessor method

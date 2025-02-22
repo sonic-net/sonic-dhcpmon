@@ -24,7 +24,6 @@
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
 #include <netpacket/packet.h>
-#include "subscriberstatetable.h"
 #include "select.h"
 
 #include "dhcp_devman.h"
@@ -45,8 +44,6 @@
 #define DHCP_OPTIONS_HEADER_SIZE 240
 /** Offset of DHCP GIADDR */
 #define DHCP_GIADDR_OFFSET 24
-/* STATE_DB DHCP counter table name */
-#define DB_COUNTER_TABLE "DHCP_COUNTER_TABLE|"
 
 #define OP_LDHA     (BPF_LD  | BPF_H   | BPF_ABS)   /** bpf ldh Abs */
 #define OP_LDHI     (BPF_LD  | BPF_H   | BPF_IND)   /** bpf ldh Ind */
@@ -58,7 +55,7 @@
 #define OP_LDXB     (BPF_LDX | BPF_B    | BPF_MSH)  /** bpf ldxb */
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
-std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0);
+std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
     mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
@@ -85,8 +82,6 @@ bool is_counter_increased = false;
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"
 };
-/* db counter init value in uint64_t */
-uint64_t db_counter[DHCP_MESSAGE_TYPE_COUNT] = {};
 
 const std::string init_counter_str;
 
@@ -324,60 +319,9 @@ std::string gen_counter_json_str(uint64_t *counters) {
 void initialize_db_counters(std::string &ifname)
 {
     auto table_name = DB_COUNTER_TABLE + ifname;
-    auto init_value = gen_counter_json_str(db_counter);
+    auto init_value = generate_json_string(nullptr);
     mStateDbPtr->hset(table_name, "RX", init_value);
     mStateDbPtr->hset(table_name, "TX", init_value);
-}
-
-/**
- * @code                void increase_db_counter(std::string &ifname, uint8_t msg_type, dhcp_packet_direction_t dir)
- *
- * @brief               increase the counter in state_db with count of each DHCP message types
- *
- * @param ifname        interface name
- * @param type          dhcp message type to be increased in counter
- * @param dir           dhcp packet direction
- * 
- * @return              none
- */
-void increase_db_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir) {
-    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
-        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
-        type = 0; // treate it as unknown counter
-    }
-    std::string table_name = DB_COUNTER_TABLE + ifname;
-    std::string msg_type = db_counter_name[type];
-    auto counters_json = mStateDbPtr->hget(table_name, (dir == DHCP_RX) ? "RX" : "TX");
-    if (counters_json == nullptr) {
-        db_counter[type] = 1;
-        auto json_string = gen_counter_json_str(db_counter);
-        mStateDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", json_string);
-        db_counter[type] = 0;
-    } else {
-        Json::Value root;
-        Json::CharReaderBuilder builder;
-        Json::StreamWriterBuilder wbuilder;
-        JSONCPP_STRING err;
-
-        std::replace(counters_json.get()->begin(), counters_json.get()->end(), '\'', '\"');
-        auto json_begin = counters_json.get()->c_str();
-        auto json_end = json_begin + counters_json.get()->length();
-        const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-        if (reader->parse(json_begin, json_end, &root, &err)) {
-            if (root.isMember(msg_type)) {
-                std::string cnt_string = root[msg_type].asString();
-                auto cnt = std::stoull(cnt_string) + 1;
-                root[msg_type] = Json::Value(std::to_string(cnt));
-            } else {
-                root[msg_type] = Json::Value(std::to_string(1));
-            }
-            wbuilder["indentation"] = ""; // whitespace-less output
-            const std::string document = Json::writeString(wbuilder, root);
-            mStateDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", document);
-        } else {
-            syslog(LOG_WARNING, "failed to parse counter json: %s, %s", json_begin, err.c_str());
-        }
-    }
 }
 
 /**
@@ -435,7 +379,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
 
     // count for incomming physical interfaces
     if (context_if.compare(sock_if) != 0) {
-        increase_db_counter(sock_if, dhcp_option[2], dir);
         increase_cache_counter(sock_if, dhcp_option[2], dir);
         return;
     }
@@ -455,7 +398,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             // count for device context interfaces (-d -u -m)
-            increase_db_counter(context_if, dhcp_option[2], dir);
             increase_cache_counter(context_if, dhcp_option[2], dir);
         }
         break;
@@ -468,14 +410,12 @@ static void handle_dhcp_option_53(std::string &sock_if,
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             // count for device context interfaces (-d -u -m)
-            increase_db_counter(context_if, dhcp_option[2], dir);
             increase_cache_counter(context_if, dhcp_option[2], dir);
         }
         break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
         // count for device context interfaces (-d -u -m)
-        increase_db_counter(context_if, dhcp_option[2], dir);
         increase_cache_counter(context_if, dhcp_option[2], dir);
         break;
     }
@@ -949,6 +889,18 @@ int dhcp_device_get_ip(dhcp_device_context_t *context, in_addr_t *ip)
 dhcp_device_context_t* dhcp_device_get_aggregate_context()
 {
     return &aggregate_dev;
+}
+
+/**
+ * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
+ *
+ * @brief Accessor method
+ *
+ * @return pointer to rx counter
+ */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir)
+{
+    return (dir == DHCP_RX ? &rx_counter : &tx_counter);
 }
 
 /**

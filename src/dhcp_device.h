@@ -16,25 +16,15 @@
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
 
+#include "subscriberstatetable.h"
+#include "util.h"
+
+/* STATE_DB DHCP counter table name */
+#define DB_COUNTER_TABLE "DHCPV4_COUNTER_TABLE|"
+
+extern std::shared_ptr<swss::DBConnector> mStateDbPtr;
 extern bool dual_tor_sock;
 extern std::unordered_map<std::string, struct intf*> intfs;
-
-/**
- * DHCP message types
- **/
-typedef enum
-{
-    DHCP_MESSAGE_TYPE_DISCOVER = 1,
-    DHCP_MESSAGE_TYPE_OFFER    = 2,
-    DHCP_MESSAGE_TYPE_REQUEST  = 3,
-    DHCP_MESSAGE_TYPE_DECLINE  = 4,
-    DHCP_MESSAGE_TYPE_ACK      = 5,
-    DHCP_MESSAGE_TYPE_NAK      = 6,
-    DHCP_MESSAGE_TYPE_RELEASE  = 7,
-    DHCP_MESSAGE_TYPE_INFORM   = 8,
-
-    DHCP_MESSAGE_TYPE_COUNT
-} dhcp_message_type_t;
 
 enum
 {
@@ -89,6 +79,8 @@ typedef struct
                                     /** current/snapshot counters of DHCP packets */
 } dhcp_device_context_t;
 
+extern std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
+
 /**
  * @code initialize_intf_mac_and_ip_addr(context);
  *
@@ -120,6 +112,15 @@ int dhcp_device_get_ip(dhcp_device_context_t *context, in_addr_t *ip);
  * @return pointer to aggregate device (interface) context
  */
 dhcp_device_context_t* dhcp_device_get_aggregate_context();
+
+/**
+ * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
+ *
+ * @brief Accessor method
+ *
+ * @return pointer to rx counter
+ */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir);
 
 /**
  * @code dhcp_device_init(context, intf, is_uplink);
@@ -204,19 +205,6 @@ void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type
  * @return              none
  */
 void initialize_db_counters(std::string &ifname);
-
-/**
- * @code                void increase_db_counter(std::string &ifname, uint8_t msg_type, dhcp_packet_direction_t dir)
- *
- * @brief               increase the counter in state_db with count of each DHCP message types
- *
- * @param ifname        interface name
- * @param type          dhcp message type to be increased in counter
- * @param dir           dhcp packet direction
- * 
- * @return              none
- */
-void increase_db_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
 
 /**
  * Initialize cache counter

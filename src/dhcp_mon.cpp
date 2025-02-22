@@ -12,7 +12,6 @@
 #include <sys/syscall.h>
 #include <syslog.h>
 #include <assert.h>
-
 #include "dhcp_mon.h"
 #include "dhcp_devman.h"
 #include "events.h"
@@ -34,8 +33,12 @@ static int dhcp_unhealthy_max_count = 10;
 static bool debug_on = false;
 /** libevent base struct */
 static struct event_base *base;
+/** libevent base struct */
+static struct event_base *db_update_base;
 /** libevent timeout event struct */
 static struct event *ev_timeout = NULL;
+/** libevent timeout event struct */
+static struct event *ev_db_update = NULL;
 /** libevent SIGINT signal event struct */
 static struct event *ev_sigint;
 /** libevent SIGTERM signal event struct */
@@ -152,6 +155,50 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
     }
 }
 
+std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter) {
+    std::string res;
+    res.reserve(300);
+    res.append("{");
+    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+        auto value = std::to_string(counter == nullptr ? 0 : counter->at(i));
+        auto json_value = "'" + db_counter_name[i] + "':'" + value + "'";
+        res.append(json_value);
+        if (i < DHCP_MESSAGE_TYPE_COUNT - 1) {
+            res.append(",");
+        }
+    }   
+    res.append("}");
+    return res;
+}
+
+void update_counter(dhcp_packet_direction_t dir) {
+    std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* counter = dhcp_device_get_counter(dir);
+    for (const auto& outer_pair : *counter) {
+        const std::string interface_name = outer_pair.first;
+        const auto* inner_map = &outer_pair.second;
+        std::string value = generate_json_string(inner_map);
+        std::string table_name = DB_COUNTER_TABLE + interface_name;
+        mStateDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", value);
+    }
+}
+
+/**
+ * @code db_update_callback(fd, event, arg);
+ *
+ * @brief periodic timer call back
+ *
+ * @param fd        libevent socket
+ * @param event     event triggered
+ * @param arg       pointer user provided context (libevent base)
+ *
+ * @return none
+ */
+static void db_update_callback(evutil_socket_t fd, short event, void *arg)
+{
+    update_counter(DHCP_RX);
+    update_counter(DHCP_TX);
+}
+
 /**
  * @code dhcp_mon_init(window_sec, max_count);
  *
@@ -168,6 +215,7 @@ int dhcp_mon_init(int window_sec, int max_count)
         dhcp_unhealthy_max_count = max_count;
 
         base = event_base_new();
+        db_update_base = event_base_new();
         if (base == NULL) {
             syslog(LOG_ERR, "Could not initialize libevent!\n");
             break;
@@ -197,6 +245,12 @@ int dhcp_mon_init(int window_sec, int max_count)
             break;
         }
 
+        ev_db_update = event_new(base, -1, EV_PERSIST, db_update_callback, db_update_base);
+        if (ev_db_update == NULL) {
+            syslog(LOG_ERR, "Could not create db update timer!\n");
+            break;
+        }
+
         g_events_handle = events_init_publisher("sonic-events-dhcp-relay");
 
         rv = 0;
@@ -213,16 +267,19 @@ int dhcp_mon_init(int window_sec, int max_count)
 void dhcp_mon_shutdown()
 {
     event_del(ev_timeout);
+    event_del(ev_db_update);
     event_del(ev_sigint);
     event_del(ev_sigterm);
     event_del(ev_sigusr1);
 
     event_free(ev_timeout);
+    event_free(ev_db_update);
     event_free(ev_sigint);
     event_free(ev_sigterm);
     event_free(ev_sigusr1);
 
     event_base_free(base);
+    event_base_free(db_update_base);
 
     events_deinit_publisher(g_events_handle);
 }
@@ -263,9 +320,18 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             syslog(LOG_ERR, "Could not add event timer to libevent!\n");
             break;
         }
+        if (evtimer_add(ev_db_update, &event_time) != 0) {
+            syslog(LOG_ERR, "Could not add db update timer to libevent!\n");
+            break;
+        }
 
         if (event_base_dispatch(base) != 0) {
             syslog(LOG_ERR, "Could not start libevent dispatching loop!\n");
+            break;
+        }
+
+        if (event_base_dispatch(db_update_base) != 0) {
+            syslog(LOG_ERR, "Could not start db update libevent dispatching loop!\n");
             break;
         }
         rv = 0;
@@ -282,4 +348,5 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
 void dhcp_mon_stop()
 {
     event_base_loopexit(base, NULL);
+    event_base_loopexit(db_update_base, NULL);
 }
