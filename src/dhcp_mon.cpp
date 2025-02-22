@@ -221,6 +221,11 @@ int dhcp_mon_init(int window_sec, int max_count)
             break;
         }
 
+        if (db_update_base == NULL) {
+            syslog(LOG_ERR, "Could not initialize db update base!\n");
+            break;
+        }
+
         ev_sigint = evsignal_new(base, SIGINT, signal_callback, base);
         if (ev_sigint == NULL) {
             syslog(LOG_ERR, "Could not create SIGINT libevent signal!\n");
@@ -245,7 +250,7 @@ int dhcp_mon_init(int window_sec, int max_count)
             break;
         }
 
-        ev_db_update = event_new(base, -1, EV_PERSIST, db_update_callback, db_update_base);
+        ev_db_update = event_new(db_update_base, -1, EV_PERSIST, db_update_callback, db_update_base);
         if (ev_db_update == NULL) {
             syslog(LOG_ERR, "Could not create db update timer!\n");
             break;
@@ -284,6 +289,12 @@ void dhcp_mon_shutdown()
     events_deinit_publisher(g_events_handle);
 }
 
+void sub_thread_dispatch() {
+    if (event_base_dispatch(db_update_base) != 0) {
+        syslog(LOG_ERR, "Could not start db update libevent dispatching loop!\n");
+    }
+}
+
 /**
  * @code dhcp_mon_start(snaplen, debug_mode);
  *
@@ -320,20 +331,20 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             syslog(LOG_ERR, "Could not add event timer to libevent!\n");
             break;
         }
+
         if (evtimer_add(ev_db_update, &event_time) != 0) {
             syslog(LOG_ERR, "Could not add db update timer to libevent!\n");
             break;
         }
 
+        std::thread sub_thread(sub_thread_dispatch);
+
         if (event_base_dispatch(base) != 0) {
             syslog(LOG_ERR, "Could not start libevent dispatching loop!\n");
             break;
         }
+        sub_thread.join();
 
-        if (event_base_dispatch(db_update_base) != 0) {
-            syslog(LOG_ERR, "Could not start db update libevent dispatching loop!\n");
-            break;
-        }
         rv = 0;
     } while (0);
 
