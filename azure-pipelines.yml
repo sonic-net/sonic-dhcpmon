@@ -15,14 +15,14 @@ jobs:
     pool:
       vmImage: 'ubuntu-20.04'
     codeCoverage: false
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:latest
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bullseye:latest
 - template: .azure-pipelines/build.yml
   parameters:
     arch: arm64
     pool: sonicbld-arm64
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-arm64:latest
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bullseye-arm64:latest
 - template: .azure-pipelines/build.yml
   parameters:
     arch: armhf
     pool: sonicbld-armhf
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-armhf:latest
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bullseye-armhf:latest
