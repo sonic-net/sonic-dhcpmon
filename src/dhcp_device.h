@@ -17,7 +17,6 @@
 #include <event2/buffer.h>
 
 #include "subscriberstatetable.h"
-#include "util.h"
 
 /* STATE_DB DHCP counter table name */
 #define DB_COUNTER_TABLE "DHCPV4_COUNTER_TABLE|"
@@ -25,6 +24,23 @@
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 extern bool dual_tor_sock;
 extern std::unordered_map<std::string, struct intf*> intfs;
+
+/**
+ * DHCP message types
+ **/
+typedef enum
+{
+    DHCP_MESSAGE_TYPE_DISCOVER = 1,
+    DHCP_MESSAGE_TYPE_OFFER    = 2,
+    DHCP_MESSAGE_TYPE_REQUEST  = 3,
+    DHCP_MESSAGE_TYPE_DECLINE  = 4,
+    DHCP_MESSAGE_TYPE_ACK      = 5,
+    DHCP_MESSAGE_TYPE_NAK      = 6,
+    DHCP_MESSAGE_TYPE_RELEASE  = 7,
+    DHCP_MESSAGE_TYPE_INFORM   = 8,
+
+    DHCP_MESSAGE_TYPE_COUNT
+} dhcp_message_type_t;
 
 enum
 {
@@ -241,5 +257,16 @@ void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direc
  *
  */
 void clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
+
+/**
+ * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
+ *
+ * @brief               Generate JSON string by counter dict
+ *
+ * @param counter       Counter dict
+ *
+ * @return              none
+ */
+std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter);
 
 #endif /* DHCP_DEVICE_H_ */

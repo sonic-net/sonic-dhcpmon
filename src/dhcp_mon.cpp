@@ -7,7 +7,6 @@
 #include <signal.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <syslog.h>
@@ -154,22 +153,6 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
         dhcp_devman_print_status(NULL, DHCP_COUNTERS_SNAPSHOT);
         dhcp_devman_print_status(NULL, DHCP_COUNTERS_CURRENT);
     }
-}
-
-std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter) {
-    std::string res;
-    res.reserve(300);
-    res.append("{");
-    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
-        auto value = std::to_string(counter == nullptr ? 0 : counter->at(i));
-        auto json_value = "'" + db_counter_name[i] + "':'" + value + "'";
-        res.append(json_value);
-        if (i < DHCP_MESSAGE_TYPE_COUNT - 1) {
-            res.append(",");
-        }
-    }   
-    res.append("}");
-    return res;
 }
 
 void update_counter(dhcp_packet_direction_t dir) {

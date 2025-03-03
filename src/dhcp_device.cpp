@@ -282,6 +282,31 @@ void update_mgmt_mapping() {
 }
 
 /**
+ * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
+ *
+ * @brief               Generate JSON string by counter dict
+ *
+ * @param counter       Counter dict
+ *
+ * @return              none
+ */
+std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter) {
+    std::string res;
+    res.reserve(300);
+    res.append("{");
+    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+        auto value = std::to_string(counter == nullptr ? 0 : counter->at(i));
+        auto json_value = "'" + db_counter_name[i] + "':'" + value + "'";
+        res.append(json_value);
+        if (i < DHCP_MESSAGE_TYPE_COUNT - 1) {
+            res.append(",");
+        }
+    }
+    res.append("}");
+    return res;
+}
+
+/**
  * @code                void initialize_db_counters(std::string &ifname)
  *
  * @brief               Initialize the counter in counters_db with interface name
