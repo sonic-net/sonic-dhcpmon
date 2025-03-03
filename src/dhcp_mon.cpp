@@ -155,6 +155,15 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
     }
 }
 
+/**
+ * @code update_counter(dhcp_packet_direction_t dir)
+ *
+ * @brief Function to update counter dict
+ *
+ * @param dir       Packet direction
+ *
+ * @return none
+ */
 void update_counter(dhcp_packet_direction_t dir) {
     std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* counter = dhcp_device_get_counter(dir);
     for (const auto& outer_pair : *counter) {
