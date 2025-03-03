@@ -12,6 +12,7 @@
 #include <sys/syscall.h>
 #include <syslog.h>
 #include <assert.h>
+
 #include "dhcp_mon.h"
 #include "dhcp_devman.h"
 #include "events.h"
@@ -178,7 +179,7 @@ void update_counter(dhcp_packet_direction_t dir) {
         const auto* inner_map = &outer_pair.second;
         std::string value = generate_json_string(inner_map);
         std::string table_name = DB_COUNTER_TABLE + interface_name;
-        mStateDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", value);
+        mCountersDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", value);
     }
 }
 

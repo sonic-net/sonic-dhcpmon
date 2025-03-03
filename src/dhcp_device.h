@@ -22,7 +22,7 @@
 /* STATE_DB DHCP counter table name */
 #define DB_COUNTER_TABLE "DHCPV4_COUNTER_TABLE|"
 
-extern std::shared_ptr<swss::DBConnector> mStateDbPtr;
+extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 extern bool dual_tor_sock;
 extern std::unordered_map<std::string, struct intf*> intfs;
 
@@ -196,9 +196,9 @@ void dhcp_device_update_snapshot(dhcp_device_context_t *context);
 void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type);
 
 /**
- * @code                void increase_db_counter(std::string &ifname)
+ * @code                void initialize_db_counter(std::string &ifname)
  *
- * @brief               increase the counter in state_db with interface name
+ * @brief               Initialize the counter in counters_db with interface name
  *
  * @param ifname        interface name
  * 
@@ -207,13 +207,39 @@ void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type
 void initialize_db_counters(std::string &ifname);
 
 /**
- * Initialize cache counter
+ * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+ *
+ * @brief Initialize cache counter per interface
+ * 
+ * @param counters         counter data
+ * 
+ * @param interface_name   string value of interface name
  */
 void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
 
 /**
- * Increase cache counter
+ * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
+ * 
+ * @brief               Increase cache counter
+ * 
+ * @param ifname        Interface name
+ * 
+ * @param type          Packet type
+ * 
+ * @param dir           Packet direction
+ * 
+ * @return              none
  */
 void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
+
+/**
+ * @code clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
+ *
+ * @brief Clear all counter
+ *
+ * @param counters_db      counters_db connector pointer
+ *
+ */
+void clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
 
 #endif /* DHCP_DEVICE_H_ */

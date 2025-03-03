@@ -9,7 +9,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
-#include <algorithm>
 #include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
@@ -19,7 +18,6 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <syslog.h>
-#include <jsoncpp/json/json.h>
 #include <inttypes.h>
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
@@ -55,9 +53,9 @@
 #define OP_LDXB     (BPF_LDX | BPF_B    | BPF_MSH)  /** bpf ldxb */
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
-std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
+std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
-    mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
+    mCountersDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
 
 /* interface to vlan mapping */
@@ -75,15 +73,10 @@ std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> rx_counte
 /* RX per-interface counter data */
 std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counter;
 
-/* Indicate whether cache counter change */
-bool is_counter_increased = false;
-
 /* db counter name array, message type rage [1, 8] */
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"
 };
-
-const std::string init_counter_str;
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
  * This program is obtained using the following command tcpdump:
@@ -180,14 +173,14 @@ static dhcp_message_type_t monitored_msgs[] = {
 void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("VLAN_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
-    std::unordered_map<std::string, bool> vlans;
+    std::unordered_set<std::string> vlans;
     for (auto &itr : keys) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto vlan = itr.substr(first + 1, second - first - 1);
         auto interface = itr.substr(second + 1);
         vlan_map[interface] = vlan;
-        vlans[vlan] = true;
+        vlans.insert(vlan);
         syslog(LOG_INFO, "add <%s, %s> into interface vlan map\n", interface.c_str(), vlan.c_str());
         std::string ifname = interface;
         initialize_db_counters(ifname);
@@ -195,8 +188,7 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         initialize_cache_counter(rx_counter, ifname);
         initialize_cache_counter(tx_counter, ifname);
     }
-    for (auto &itr : vlans) {
-        std::string ifname = itr.first;
+    for (auto ifname : vlans) {
         initialize_db_counters(ifname);
 
         initialize_cache_counter(rx_counter, ifname);
@@ -206,7 +198,13 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
 
 
 /**
- * Initialize cache counter
+ * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+ *
+ * @brief Initialize cache counter per interface
+ * 
+ * @param counters         counter data
+ * 
+ * @param interface_name   string value of interface name
  */
 void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name) {
     auto counter = counters.find(interface_name);
@@ -223,19 +221,19 @@ void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map
 }
 
 /**
- * @code clear_counter(std::shared_ptr<swss::DBConnector> state_db);
+ * @code clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
  *
  * @brief Clear all counter
  *
- * @param state_db      state_db connector pointer
+ * @param counters_db      counters_db connector pointer
  *
  */
-void clear_counter(std::shared_ptr<swss::DBConnector> state_db) {
+void clear_counter(std::shared_ptr<swss::DBConnector> counters_db) {
     std::string match_pattern = DB_COUNTER_TABLE + std::string("*");
-    auto keys = state_db->keys(match_pattern);
+    auto keys = counters_db->keys(match_pattern);
 
     for (auto &itr : keys) {
-        state_db->del(itr);
+        counters_db->del(itr);
     }
 }
 
@@ -246,14 +244,14 @@ void clear_counter(std::shared_ptr<swss::DBConnector> state_db) {
 void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("PORTCHANNEL_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
-    std::unordered_map<std::string, bool> portchannels;
+    std::unordered_set<std::string> portchannels;
     for (auto &itr : keys) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto portchannel = itr.substr(first + 1, second - first - 1);
         auto interface = itr.substr(second + 1);
         portchan_map[interface] = portchannel;
-        portchannels[portchannel] = true;
+        portchannels.insert(portchannel);
         syslog(LOG_INFO, "add <%s, %s> into interface port-channel map\n", interface.c_str(), portchannel.c_str());
         std::string ifname = interface;
         initialize_db_counters(ifname);
@@ -261,8 +259,7 @@ void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         initialize_cache_counter(rx_counter, ifname);
         initialize_cache_counter(tx_counter, ifname);
     }
-    for (auto &itr : portchannels) {
-        std::string ifname = itr.first;
+    for (auto ifname : portchannels) {
         initialize_db_counters(ifname);
 
         initialize_cache_counter(rx_counter, ifname);
@@ -285,32 +282,9 @@ void update_mgmt_mapping() {
 }
 
 /**
- * @code                void gen_counter_json_str()
+ * @code                void initialize_db_counters(std::string &ifname)
  *
- * @brief               generate counter json string based on the value in counters array
- *
- * @return              counter json string
- */
-std::string gen_counter_json_str(uint64_t *counters) {
-    std::string init_value;
-
-    init_value.append("{");
-    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
-        auto value = std::to_string(counters[i]);
-        auto json_str = "'" + db_counter_name[i] + "'"+ ":" + "'" + value + "'";
-        init_value.append(json_str);
-        if (i + 1 < DHCP_MESSAGE_TYPE_COUNT) {
-            init_value.append(",");
-        }
-    }
-    init_value.append("}");
-    return init_value;
-}
-
-/**
- * @code                void increase_db_counter(std::string &ifname)
- *
- * @brief               increase the counter in state_db with interface name
+ * @brief               Initialize the counter in counters_db with interface name
  *
  * @param ifname        interface name
  * 
@@ -320,12 +294,22 @@ void initialize_db_counters(std::string &ifname)
 {
     auto table_name = DB_COUNTER_TABLE + ifname;
     auto init_value = generate_json_string(nullptr);
-    mStateDbPtr->hset(table_name, "RX", init_value);
-    mStateDbPtr->hset(table_name, "TX", init_value);
+    mCountersDbPtr->hset(table_name, "RX", init_value);
+    mCountersDbPtr->hset(table_name, "TX", init_value);
 }
 
 /**
- * Increase cache counter
+ * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
+ * 
+ * @brief               Increase cache counter
+ * 
+ * @param ifname        Interface name
+ * 
+ * @param type          Packet type
+ * 
+ * @param dir           Packet direction
+ * 
+ * @return              none
  */
 void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir) {
     if (type >= DHCP_MESSAGE_TYPE_COUNT) {
@@ -338,7 +322,6 @@ void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direc
         syslog(LOG_WARNING, "Cannot find %s counter for %s\n", (dir == DHCP_RX ? "RX" : "TX"), ifname.c_str());
         return;
     }
-    is_counter_increased = true;
     counter->second[type]++;
 }
 
@@ -393,8 +376,19 @@ static void handle_dhcp_option_53(std::string &sock_if,
     case DHCP_MESSAGE_TYPE_INFORM:
         giaddr = ntohl(dhcphdr[DHCP_GIADDR_OFFSET] << 24 | dhcphdr[DHCP_GIADDR_OFFSET + 1] << 16 |
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
+        /**
+         * For packets from DHCP client to DHCP server, wouldn't count packets with giaddr not equal to current gateway for now
+         * 
+         * TX packets: means relayed to server. Because one dhcpmon process would capture all packets go through uplink interface, hence
+         * we need to compare giaddr to make sure packets are related to current gateway, wouldn'd count packets with giaddr not equal to current gateway
+         * 
+         * RX packets, means received from client. Even if the packets here are all related on downstream Vlan, but TX packets with giaddr not equal
+         * to current gateway wouldn't be counted, to avoid incorrect counting,  wouldn't count RX packets with giaddr not equal to current gateway
+         * 
+         * TODO add support to count packets with giaddr no equal to current gateway
+         */
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
-            (!context->is_uplink && dir == DHCP_RX && iphdr->ip_dst.s_addr == INADDR_BROADCAST)) {
+            (!context->is_uplink && dir == DHCP_RX && (iphdr->ip_dst.s_addr == INADDR_BROADCAST || iphdr->ip_dst.s_addr == context->giaddr_ip) && (giaddr == 0 || context->giaddr_ip == giaddr))) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             // count for device context interfaces (-d -u -m)
@@ -405,6 +399,13 @@ static void handle_dhcp_option_53(std::string &sock_if,
     case DHCP_MESSAGE_TYPE_OFFER:
     case DHCP_MESSAGE_TYPE_ACK:
     case DHCP_MESSAGE_TYPE_NAK:
+    /**
+     * For packets from DHCP server to DHCP client, would count packets with giaddr not equal to current gateway
+     * 
+     * RX packets: means received from server. If dst ip is gateway, means the packets must target to current gateway, no need to check giaddr in dhcphdr
+     * 
+     * TX packets: means relayed to client. The packets caputred here must related to corresponding gateway, hence no need to compare giaddr in dhcphdr
+     */
         if ((context->giaddr_ip == iphdr->ip_dst.s_addr && context->is_uplink && dir == DHCP_RX) ||
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
@@ -957,7 +958,7 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
 
         init_recv_buffers(snaplen);
 
-        clear_counter(mStateDbPtr);
+        clear_counter(mCountersDbPtr);
         update_vlan_mapping(mConfigDbPtr);
         update_portchannel_mapping(mConfigDbPtr);
         update_mgmt_mapping();
