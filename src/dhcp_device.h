@@ -80,6 +80,13 @@ typedef enum
     DHCP_MON_CHECK_POSITIVE,    /** Validate that received DORA packets are relayed */
 } dhcp_mon_check_t;
 
+typedef enum
+{
+    DHCP_VALID,
+    DHCP_INVALID,
+    DHCP_UNKNOWN
+} dhcp_mon_packet_valid_type_t;
+
 /** DHCP device (interface) context */
 typedef struct
 {

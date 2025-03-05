@@ -31,7 +31,8 @@ static const uint32_t dhcpmon_default_health_check_window = 18;
 /** dhcpmon_default_unhealthy_max_count: default max consecutive unhealthy status reported before reporting an issue
  *  with DHCP relay */
 static const uint32_t dhcpmon_default_unhealthy_max_count = 10;
-
+/** dhcpmon_default_db_update_interval: default value for a db update interval */
+static const uint32_t dhcpmon_default_db_update_interval = 5;
 bool dual_tor_sock = false;
 
 /**
@@ -46,7 +47,8 @@ bool dual_tor_sock = false;
 static void usage(const char *prog)
 {
     printf("Usage: %s -id <south interface> {-iu <north interface>}+ -im <mgmt interface> [-u <loopback interface>]"
-            "[-w <snapshot window in sec>] [-c <unhealthy status count>] [-s <snap length>] [-D] [-d]\n", prog);
+            "[-w <snapshot window in sec>] [-c <unhealthy status count>] [-s <snap length>] [-D] [-d]"
+            "[-I <db update interval in sec>]\n", prog);
     printf("where\n");
     printf("\tsouth interface: is a vlan interface,\n");
     printf("\tnorth interface: is a TOR-T1 interface,\n");
@@ -59,6 +61,8 @@ static void usage(const char *prog)
     printf("\tsnap length: snap length of packet capture (default %ld),\n", dhcpmon_default_snaplen);
     printf("\t-D: debug mode: print counter to syslog\n");
     printf("\t-d: daemonize %s.\n", prog);
+    printf("\t-I: db update interval (default %ds),\n",
+            dhcpmon_default_db_update_interval);
 
     exit(EXIT_SUCCESS);
 }
@@ -117,6 +121,7 @@ int main(int argc, char **argv)
     char *endptr;
     int window_interval = dhcpmon_default_health_check_window;
     int max_unhealthy_count = dhcpmon_default_unhealthy_max_count;
+    int db_update_interval = dhcpmon_default_db_update_interval;
     size_t snaplen = dhcpmon_default_snaplen;
     int make_daemon = 0;
     bool debug_mode = false;
@@ -179,6 +184,14 @@ int main(int argc, char **argv)
             debug_mode = true;
             i += 1;
             break;
+        case 'I':
+            db_update_interval = strtol(argv[i + 1], &endptr, 10);
+            if (errno != 0 || *endptr != '\0') {
+                fprintf(stderr, "%s: %s: Invalid DB update interval\n", basename(argv[0]), argv[i + 1]);
+                usage(basename(argv[0]));
+            }
+            i += 2;
+            break;
         default:
             fprintf(stderr, "%s: %c: Unknown option\n", basename(argv[0]), argv[i][1]);
             usage(basename(argv[0]));
@@ -189,7 +202,7 @@ int main(int argc, char **argv)
         dhcpmon_daemonize();
     }
 
-    if ((dhcp_mon_init(window_interval, max_unhealthy_count) == 0) &&
+    if ((dhcp_mon_init(window_interval, max_unhealthy_count, db_update_interval) == 0) &&
         (dhcp_mon_start(snaplen, debug_mode) == 0)) {
 
         rv = EXIT_SUCCESS;

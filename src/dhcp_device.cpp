@@ -384,12 +384,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
 {
     in_addr_t giaddr;
     std::string context_if(context->intf);
-
-    // count for incomming physical interfaces
-    if (context_if.compare(sock_if) != 0) {
-        increase_cache_counter(sock_if, dhcp_option[2], dir);
-        return;
-    }
+    dhcp_mon_packet_valid_type_t packet_valid_type = DHCP_INVALID;
 
     switch (dhcp_option[2])
     {
@@ -402,13 +397,13 @@ static void handle_dhcp_option_53(std::string &sock_if,
         giaddr = ntohl(dhcphdr[DHCP_GIADDR_OFFSET] << 24 | dhcphdr[DHCP_GIADDR_OFFSET + 1] << 16 |
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
         /**
-         * For packets from DHCP client to DHCP server, wouldn't count packets with giaddr not equal to current gateway for now
+         * For packets from DHCP client to DHCP server, wouldn't count packets which already have other giaddr
          * 
          * TX packets: means relayed to server. Because one dhcpmon process would capture all packets go through uplink interface, hence
          * we need to compare giaddr to make sure packets are related to current gateway, wouldn'd count packets with giaddr not equal to current gateway
          * 
          * RX packets, means received from client. Even if the packets here are all related on downstream Vlan, but TX packets with giaddr not equal
-         * to current gateway wouldn't be counted, to avoid incorrect counting,  wouldn't count RX packets with giaddr not equal to current gateway
+         * to current gateway wouldn't be counted, to avoid incorrect counting,  wouldn't count RX packets which already have other giaddr
          * 
          * TODO add support to count packets with giaddr no equal to current gateway
          */
@@ -416,8 +411,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
             (!context->is_uplink && dir == DHCP_RX && (iphdr->ip_dst.s_addr == INADDR_BROADCAST || iphdr->ip_dst.s_addr == context->giaddr_ip) && (giaddr == 0 || context->giaddr_ip == giaddr))) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            // count for device context interfaces (-d -u -m)
-            increase_cache_counter(context_if, dhcp_option[2], dir);
+            packet_valid_type = DHCP_VALID;
         }
         break;
     // DHCP messages send by server
@@ -425,7 +419,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
     case DHCP_MESSAGE_TYPE_ACK:
     case DHCP_MESSAGE_TYPE_NAK:
     /**
-     * For packets from DHCP server to DHCP client, would count packets with giaddr not equal to current gateway
+     * For packets from DHCP server to DHCP client, would count packets which already have other giaddr
      * 
      * RX packets: means received from server. If dst ip is gateway, means the packets must target to current gateway, no need to check giaddr in dhcphdr
      * 
@@ -435,15 +429,25 @@ static void handle_dhcp_option_53(std::string &sock_if,
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            // count for device context interfaces (-d -u -m)
-            increase_cache_counter(context_if, dhcp_option[2], dir);
+            packet_valid_type = DHCP_VALID;
         }
         break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
+        packet_valid_type = DHCP_UNKNOWN;
+        break;
+    }
+
+    if (packet_valid_type == DHCP_INVALID) {
+        return;
+    }
+
+    if (context_if.compare(sock_if) != 0) {
+        // count for incomming physical interfaces
+        increase_cache_counter(sock_if, dhcp_option[2], dir);
+    } else {
         // count for device context interfaces (-d -u -m)
         increase_cache_counter(context_if, dhcp_option[2], dir);
-        break;
     }
 }
 

@@ -45,6 +45,8 @@ static struct event *ev_sigint;
 static struct event *ev_sigterm;
 /** libevent SIGUSR1 signal event struct */
 static struct event *ev_sigusr1;
+/** window_interval_sec monitoring window for dhcp relay health checks */
+static int db_update_interval_sec;
 
 event_handle_t g_events_handle;
 
@@ -193,19 +195,20 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
 }
 
 /**
- * @code dhcp_mon_init(window_sec, max_count);
+ * @code dhcp_mon_init(window_sec, max_count, dbu_update_interval);
  *
  * initializes event base and periodic timer event that continuously collects dhcp relay health status every window_sec
  * seconds. It also writes to syslog when dhcp relay has been unhealthy for consecutive max_count checks.
  *
  */
-int dhcp_mon_init(int window_sec, int max_count)
+int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
 {
     int rv = -1;
 
     do {
         window_interval_sec = window_sec;
         dhcp_unhealthy_max_count = max_count;
+        db_update_interval_sec = db_update_interval;
 
         base = event_base_new();
         db_update_base = event_base_new();
@@ -325,7 +328,8 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             break;
         }
 
-        if (evtimer_add(ev_db_update, &event_time) != 0) {
+        struct timeval db_update_event_time = {.tv_sec = db_update_interval_sec, .tv_usec = 0};
+        if (evtimer_add(ev_db_update, &db_update_event_time) != 0) {
             syslog(LOG_ERR, "Could not add db update timer to libevent!\n");
             break;
         }

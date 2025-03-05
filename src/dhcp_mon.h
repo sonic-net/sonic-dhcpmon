@@ -9,7 +9,7 @@
 #define DHCP_MON_H_
 
 /**
- * @code dhcp_mon_init(window_ssec, max_count);
+ * @code dhcp_mon_init(window_ssec, max_count, db_update_interval);
  *
  * @brief initializes event base and periodic timer event that continuously collects dhcp relay health status every
  *        window_sec seconds. It also writes to syslog when dhcp relay has been unhealthy for consecutive max_count
@@ -17,10 +17,11 @@
  *
  * @param window_sec time interval between health checks
  * @param max_count max count of consecutive unhealthy statuses before reporting to syslog
+ * @param db_update_interval time interval of updating COUNTERS_DB
  *
  * @return 0 upon success, otherwise upon failure
  */
-int dhcp_mon_init(int window_sec, int max_count);
+int dhcp_mon_init(int window_sec, int max_count, int db_update_interval);
 
 /**
  * @code dhcp_mon_shutdown();
