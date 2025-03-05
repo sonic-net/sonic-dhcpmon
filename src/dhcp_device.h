@@ -259,16 +259,6 @@ void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map
 void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
 
 /**
- * @code clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
- *
- * @brief Clear all counter
- *
- * @param counters_db      counters_db connector pointer
- *
- */
-void clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
-
-/**
  * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
  *
  * @brief               Generate JSON string by counter dict

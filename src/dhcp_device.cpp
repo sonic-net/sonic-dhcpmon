@@ -228,24 +228,6 @@ void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map
     counters[interface_name] = new_counter;
 }
 
-/**
- * @code clear_counter(std::shared_ptr<swss::DBConnector> counters_db);
- *
- * @brief Clear all counter
- *
- * @param counters_db      counters_db connector pointer
- *
- */
-void clear_counter(std::shared_ptr<swss::DBConnector> counters_db) {
-    std::string match_pattern = DB_COUNTER_TABLE + std::string("*");
-    auto keys = counters_db->keys(match_pattern);
-
-    for (auto &itr : keys) {
-        counters_db->del(itr);
-    }
-}
-
-
 /** update ethernet interface to port-channel map
  *  PORTCHANNEL_MEMBER|PortChannel101|Ethernet112
  */
@@ -1010,7 +992,6 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
 
         init_recv_buffers(snaplen);
 
-        clear_counter(mCountersDbPtr);
         update_vlan_mapping(mConfigDbPtr);
         update_portchannel_mapping(mConfigDbPtr);
         update_mgmt_mapping();
