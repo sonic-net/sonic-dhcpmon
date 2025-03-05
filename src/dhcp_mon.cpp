@@ -168,11 +168,19 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
  */
 void update_counter(dhcp_packet_direction_t dir) {
     std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* counter = dhcp_device_get_counter(dir);
+    std::string table_name;
     for (const auto& outer_pair : *counter) {
         const std::string interface_name = outer_pair.first;
         const auto* inner_map = &outer_pair.second;
         std::string value = generate_json_string(inner_map);
-        std::string table_name = DB_COUNTER_TABLE + interface_name;
+        /**
+         * Only add downstream prefix for non-downstream interface
+         */
+        if (downstream_if_name.compare(interface_name) != 0) {
+            table_name = DB_COUNTER_TABLE + downstream_if_name + "_" + interface_name;
+        } else {
+            table_name = DB_COUNTER_TABLE + interface_name;
+        }
         mCountersDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", value);
     }
 }

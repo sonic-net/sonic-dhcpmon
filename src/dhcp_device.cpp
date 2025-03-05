@@ -57,9 +57,10 @@
 #define OP_LDXB     (BPF_LDX | BPF_B    | BPF_MSH)  /** bpf ldxb */
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
+std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0);
 std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
-    mCountersDbPtr.get(), "HW_MUX_CABLE_TABLE"
+    mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
 
 /* interface to vlan mapping */
@@ -170,6 +171,9 @@ static dhcp_message_type_t monitored_msgs[] = {
     DHCP_MESSAGE_TYPE_REQUEST,
     DHCP_MESSAGE_TYPE_ACK
 };
+
+/** Downstream interface name */
+std::string downstream_if_name;
 
 /** update ethernet interface to vlan map
  *  VLAN_MEMBER|Vlan1000|Ethernet48
@@ -321,7 +325,15 @@ std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* co
  */
 void initialize_db_counters(std::string &ifname)
 {
-    auto table_name = DB_COUNTER_TABLE + ifname;
+    /**
+     * Only add downstream prefix for non-downstream interface
+     */
+    std::string table_name;
+    if (downstream_if_name.compare(ifname) != 0) {
+        table_name = DB_COUNTER_TABLE + downstream_if_name + "_" + ifname;
+    } else {
+        table_name = DB_COUNTER_TABLE + ifname;
+    }
     auto init_value = generate_json_string(nullptr);
     mCountersDbPtr->hset(table_name, "RX", init_value);
     mCountersDbPtr->hset(table_name, "TX", init_value);

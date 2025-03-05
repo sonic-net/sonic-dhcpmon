@@ -24,6 +24,8 @@
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 extern bool dual_tor_sock;
 extern std::unordered_map<std::string, struct intf*> intfs;
+/** Downstream interface name */
+extern std::string downstream_if_name;
 
 /**
  * DHCP message types

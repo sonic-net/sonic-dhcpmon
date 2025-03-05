@@ -124,6 +124,7 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
             strncpy(agg_dev->intf + strlen(AGG_DEV_PREFIX), name, sizeof(agg_dev->intf) - strlen(AGG_DEV_PREFIX) - 1);
             agg_dev->intf[sizeof(agg_dev->intf) - 1] = '\0';
             syslog(LOG_INFO, "dhcpmon add aggregate interface '%s'\n", agg_dev->intf);
+            downstream_if_name = std::string(name);
         }
         std::string if_name;
         if_name.assign(dev->name);
