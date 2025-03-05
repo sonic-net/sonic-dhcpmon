@@ -141,10 +141,8 @@ dhcp_device_context_t* dhcp_device_get_aggregate_context();
 
 /**
  * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
- *
  * @brief Accessor method
- *
- * @return pointer to rx counter
+ * @return pointer to counter
  */
 std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir);
 
@@ -223,48 +221,34 @@ void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type
 
 /**
  * @code                void initialize_db_counter(std::string &ifname)
- *
  * @brief               Initialize the counter in counters_db with interface name
- *
  * @param ifname        interface name
- * 
  * @return              none
  */
 void initialize_db_counters(std::string &ifname);
 
 /**
  * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
- *
  * @brief Initialize cache counter per interface
- * 
  * @param counters         counter data
- * 
  * @param interface_name   string value of interface name
  */
 void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
 
 /**
  * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
- * 
  * @brief               Increase cache counter
- * 
  * @param ifname        Interface name
- * 
  * @param type          Packet type
- * 
  * @param dir           Packet direction
- * 
  * @return              none
  */
 void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
 
 /**
  * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
- *
  * @brief               Generate JSON string by counter dict
- *
  * @param counter       Counter dict
- *
  * @return              none
  */
 std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter);

@@ -204,14 +204,10 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     }
 }
 
-
 /**
  * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
- *
  * @brief Initialize cache counter per interface
- * 
  * @param counters         counter data
- * 
  * @param interface_name   string value of interface name
  */
 void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name) {
@@ -273,11 +269,8 @@ void update_mgmt_mapping() {
 
 /**
  * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
- *
  * @brief               Generate JSON string by counter dict
- *
  * @param counter       Counter dict
- *
  * @return              none
  */
 std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter) {
@@ -298,11 +291,8 @@ std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* co
 
 /**
  * @code                void initialize_db_counters(std::string &ifname)
- *
  * @brief               Initialize the counter in counters_db with interface name
- *
  * @param ifname        interface name
- * 
  * @return              none
  */
 void initialize_db_counters(std::string &ifname)
@@ -323,18 +313,14 @@ void initialize_db_counters(std::string &ifname)
 
 /**
  * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
- * 
  * @brief               Increase cache counter
- * 
  * @param ifname        Interface name
- * 
  * @param type          Packet type
- * 
  * @param dir           Packet direction
- * 
  * @return              none
  */
-void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir) {
+void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
+{
     if (type >= DHCP_MESSAGE_TYPE_COUNT) {
         syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
         type = 0; // treate it as unknown counter
@@ -928,10 +914,8 @@ dhcp_device_context_t* dhcp_device_get_aggregate_context()
 
 /**
  * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
- *
  * @brief Accessor method
- *
- * @return pointer to rx counter
+ * @return pointer to counter
  */
 std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir)
 {

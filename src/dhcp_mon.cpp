@@ -159,11 +159,8 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 
 /**
  * @code update_counter(dhcp_packet_direction_t dir)
- *
- * @brief Function to update counter dict
- *
+ * @brief Function to update counter in COUNTERS_DB
  * @param dir       Packet direction
- *
  * @return none
  */
 void update_counter(dhcp_packet_direction_t dir) {

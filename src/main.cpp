@@ -32,7 +32,7 @@ static const uint32_t dhcpmon_default_health_check_window = 18;
  *  with DHCP relay */
 static const uint32_t dhcpmon_default_unhealthy_max_count = 10;
 /** dhcpmon_default_db_update_interval: default value for a db update interval */
-static const uint32_t dhcpmon_default_db_update_interval = 5;
+static const uint32_t dhcpmon_default_db_update_interval = 20;
 bool dual_tor_sock = false;
 
 /**
