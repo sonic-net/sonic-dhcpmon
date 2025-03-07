@@ -80,7 +80,7 @@ std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counte
 
 /* db counter name array, message type rage [1, 8] */
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
-    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform"
+    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp"
 };
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
@@ -393,8 +393,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
          */
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
             (!context->is_uplink && dir == DHCP_RX && (iphdr->ip_dst.s_addr == INADDR_BROADCAST || iphdr->ip_dst.s_addr == context->giaddr_ip) && (giaddr == 0 || context->giaddr_ip == giaddr))) {
-            context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             packet_valid_type = DHCP_VALID;
         }
         break;
@@ -411,8 +409,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
      */
         if ((context->giaddr_ip == iphdr->ip_dst.s_addr && context->is_uplink && dir == DHCP_RX) ||
             (!context->is_uplink && dir == DHCP_TX)) {
-            context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             packet_valid_type = DHCP_VALID;
         }
         break;
@@ -432,6 +428,8 @@ static void handle_dhcp_option_53(std::string &sock_if,
     } else {
         // count for device context interfaces (-d -u -m)
         increase_cache_counter(context_if, dhcp_option[2], dir);
+        context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+        aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
     }
 }
 
@@ -470,6 +468,7 @@ static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *c
         if (magic_cookie != DHCP_MAGIC_COOKIE) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
+            increase_cache_counter(sock_if, BOOTP_MESSAGE, dir);
             return;
         }
         int offset = 0;
