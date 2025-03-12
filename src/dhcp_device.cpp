@@ -957,8 +957,15 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
  * @code dhcp_device_start_capture(snaplen, base, giaddr_ip);
  *
  * @brief starts packet capture on this interface
+ *
+ * @param snaplen           length of packet capture
+ * @param rx_base           libevent base for rx event
+ * @param tx_base           libevent base for tx event
+ * @param giaddr_ip         gateway IP address
+ *
+ * @return 0 on success, otherwise for failure
  */
-int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t giaddr_ip)
+int dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, in_addr_t giaddr_ip)
 {
     int rv = -1;
     struct event *rx_ev;
@@ -1001,8 +1008,8 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
-        rx_ev = event_new(base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
-        tx_ev = event_new(base, tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
+        rx_ev = event_new(rx_base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
+        tx_ev = event_new(tx_base, tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
 
         if (rx_ev == NULL || tx_ev == NULL) {
             syslog(LOG_ALERT, "event_new: failed to allocate memory for libevent event '%s'\n", strerror(errno));

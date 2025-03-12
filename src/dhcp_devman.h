@@ -94,7 +94,7 @@ int dhcp_devman_setup_dual_tor_mode(const char *name);
  *
  * @return 0 on success, nonzero otherwise
  */
-int dhcp_devman_start_capture(size_t snaplen, struct event_base *base);
+int dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base);
 
 /**
  * @code dhcp_devman_get_status(check_type, context);

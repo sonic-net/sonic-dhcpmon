@@ -167,12 +167,13 @@ int dhcp_device_init(dhcp_device_context_t **context,
  * @brief starts packet capture on this interface
  *
  * @param snaplen           length of packet capture
- * @param base              pointer to libevent base
+ * @param rx_base           libevent base for rx event
+ * @param tx_base           libevent base for tx event
  * @param giaddr_ip         gateway IP address
  *
  * @return 0 on success, otherwise for failure
  */
-int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t giaddr_ip);
+int dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, in_addr_t giaddr_ip);
 
 /**
  * @code dhcp_device_shutdown(context);

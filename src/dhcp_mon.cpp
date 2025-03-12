@@ -34,11 +34,17 @@ static bool debug_on = false;
 /** libevent base struct */
 static struct event_base *base;
 /** libevent base struct */
-static struct event_base *db_update_base;
+static struct event_base *packet_rx_base;
+/** libevent base struct */
+static struct event_base *packet_tx_base;
 /** libevent timeout event struct */
 static struct event *ev_timeout = NULL;
 /** libevent timeout event struct */
 static struct event *ev_db_update = NULL;
+/** libevent read packets event struct */
+static struct event *ev_packet_rx = NULL;
+/** libevent send packets event struct */
+static struct event *ev_packet_tx = NULL;
 /** libevent SIGINT signal event struct */
 static struct event *ev_sigint;
 /** libevent SIGTERM signal event struct */
@@ -216,14 +222,20 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
         db_update_interval_sec = db_update_interval;
 
         base = event_base_new();
-        db_update_base = event_base_new();
         if (base == NULL) {
             syslog(LOG_ERR, "Could not initialize libevent!\n");
             break;
         }
 
-        if (db_update_base == NULL) {
-            syslog(LOG_ERR, "Could not initialize db update base!\n");
+        packet_rx_base = event_base_new();
+        if (packet_rx_base == NULL) {
+            syslog(LOG_ERR, "Could not initialize packet rx base!\n");
+            break;
+        }
+
+        packet_tx_base = event_base_new();
+        if (packet_tx_base == NULL) {
+            syslog(LOG_ERR, "Could not initialize packet tx base!\n");
             break;
         }
 
@@ -251,7 +263,7 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
             break;
         }
 
-        ev_db_update = event_new(db_update_base, -1, EV_PERSIST, db_update_callback, db_update_base);
+        ev_db_update = event_new(base, -1, EV_PERSIST, db_update_callback, base);
         if (ev_db_update == NULL) {
             syslog(LOG_ERR, "Could not create db update timer!\n");
             break;
@@ -274,25 +286,46 @@ void dhcp_mon_shutdown()
 {
     event_del(ev_timeout);
     event_del(ev_db_update);
+    event_del(ev_packet_rx);
+    event_del(ev_packet_tx);
     event_del(ev_sigint);
     event_del(ev_sigterm);
     event_del(ev_sigusr1);
 
     event_free(ev_timeout);
     event_free(ev_db_update);
+    event_free(ev_packet_rx);
+    event_free(ev_packet_tx);
     event_free(ev_sigint);
     event_free(ev_sigterm);
     event_free(ev_sigusr1);
 
+    event_base_free(packet_rx_base);
+    event_base_free(packet_tx_base);
     event_base_free(base);
-    event_base_free(db_update_base);
 
     events_deinit_publisher(g_events_handle);
 }
 
-void sub_thread_dispatch() {
-    if (event_base_dispatch(db_update_base) != 0) {
-        syslog(LOG_ERR, "Could not start db update libevent dispatching loop!\n");
+/**
+ * @code rx_sub_thread_dispatch();
+ * 
+ * @brief dispatch rx event
+ */
+void rx_sub_thread_dispatch() {
+    if (event_base_dispatch(packet_rx_base) != 0) {
+        syslog(LOG_ERR, "Could not start rx packet libevent dispatching loop!\n");
+    }
+}
+
+/**
+ * @code tx_sub_thread_dispatch();
+ * 
+ * @brief dispatch tx event
+ */
+void tx_sub_thread_dispatch() {
+    if (event_base_dispatch(packet_tx_base) != 0) {
+        syslog(LOG_ERR, "Could not start tx packet libevent dispatching loop!\n");
     }
 }
 
@@ -308,7 +341,7 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
 
     do
     {
-        if (dhcp_devman_start_capture(snaplen, base) != 0) {
+        if (dhcp_devman_start_capture(snaplen, packet_rx_base, packet_tx_base) != 0) {
             break;
         }
 
@@ -339,13 +372,15 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             break;
         }
 
-        std::thread sub_thread(sub_thread_dispatch);
+        std::thread sub_thread_rx(rx_sub_thread_dispatch);
+        std::thread sub_thread_tx(tx_sub_thread_dispatch);
 
         if (event_base_dispatch(base) != 0) {
             syslog(LOG_ERR, "Could not start libevent dispatching loop!\n");
             break;
         }
-        sub_thread.join();
+        sub_thread_rx.join();
+        sub_thread_tx.join();
 
         rv = 0;
     } while (0);
@@ -361,5 +396,6 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
 void dhcp_mon_stop()
 {
     event_base_loopexit(base, NULL);
-    event_base_loopexit(db_update_base, NULL);
+    event_base_loopexit(packet_rx_base, NULL);
+    event_base_loopexit(packet_tx_base, NULL);
 }
