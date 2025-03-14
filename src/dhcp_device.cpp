@@ -26,6 +26,7 @@
 
 #include "dhcp_devman.h"
 #include "dhcp_device.h"
+#include "event_mgr.h"
 
 /** Counter print width */
 #define DHCP_COUNTER_WIDTH  9
@@ -954,20 +955,18 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
 }
 
 /**
- * @code dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event, in_addr_t giaddr_ip);
+ * @code int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
  *
  * @brief starts packet capture on this interface
  *
  * @param snaplen           length of packet capture
- * @param rx_base           libevent base for rx event
- * @param tx_base           libevent base for tx event
- * @param rx_event          libevent event for rx packet
- * @param tx_event          libevent event for tx packet
+ * @param rx_event_mgr      evnet mgr for rx event
+ * @param tx_event_mgr      event mgr for for tx event
  * @param giaddr_ip         gateway IP address
  *
  * @return 0 on success, otherwise for failure
  */
-int dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event, in_addr_t giaddr_ip)
+int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip)
 {
     int rv = -1;
     int rx_sock = -1, tx_sock = -1;
@@ -1008,15 +1007,18 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct
             exit(1);
         }
 
-        *rx_event = event_new(rx_base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
-        *tx_event = event_new(tx_base, tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
+        struct event *rx_event = event_new(rx_event_mgr->get_base(), rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
+        struct event *tx_event = event_new(tx_event_mgr->get_base(), tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
 
-        if (*rx_event == NULL || *tx_event == NULL) {
+        if (rx_event == NULL || tx_event == NULL) {
             syslog(LOG_ALERT, "event_new: failed to allocate memory for libevent event '%s'\n", strerror(errno));
             exit(1);
         }
-        event_add(*rx_event, NULL);
-        event_add(*tx_event, NULL);
+
+        if (rx_event_mgr->add_event(rx_event, NULL) != 0 || tx_event_mgr->add_event(tx_event, NULL) != 0) {
+            syslog(LOG_ERR, "add_event: failed to add event for packets tx/rx\n");
+            exit(1);
+        }
 
         rv = 0;
     } while (0);

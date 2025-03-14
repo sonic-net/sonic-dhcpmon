@@ -163,20 +163,18 @@ int dhcp_device_init(dhcp_device_context_t **context,
                      uint8_t is_uplink);
 
 /**
- * @code dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event, in_addr_t giaddr_ip);
+ * @code int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
  *
  * @brief starts packet capture on this interface
  *
  * @param snaplen           length of packet capture
- * @param rx_base           libevent base for rx event
- * @param tx_base           libevent base for tx event
- * @param rx_event          libevent event for rx packet
- * @param tx_event          libevent event for tx packet
+ * @param rx_event_mgr      evnet mgr for rx event
+ * @param tx_event_mgr      event mgr for for tx event
  * @param giaddr_ip         gateway IP address
  *
  * @return 0 on success, otherwise for failure
  */
-int dhcp_device_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event, in_addr_t giaddr_ip);
+int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
 
 /**
  * @code dhcp_device_shutdown(context);

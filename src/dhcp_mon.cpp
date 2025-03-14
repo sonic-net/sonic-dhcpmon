@@ -14,6 +14,7 @@
 
 #include "dhcp_mon.h"
 #include "dhcp_devman.h"
+#include "event_mgr.h"
 #include "events.h"
 
 /** DHCP device/interface state */
@@ -31,26 +32,12 @@ static int window_interval_sec = 18;
 static int dhcp_unhealthy_max_count = 10;
 /** dhcpmon debug mode control flag */
 static bool debug_on = false;
-/** libevent base struct */
-static struct event_base *base;
-/** libevent base struct */
-static struct event_base *packet_rx_base;
-/** libevent base struct */
-static struct event_base *packet_tx_base;
-/** libevent timeout event struct */
-static struct event *ev_timeout = NULL;
-/** libevent timeout event struct */
-static struct event *ev_db_update = NULL;
-/** libevent tx event struct */
-static struct event *ev_packet_rx = NULL;
-/** libevent rx event struct */
-static struct event *ev_packet_tx = NULL;
-/** libevent SIGINT signal event struct */
-static struct event *ev_sigint;
-/** libevent SIGTERM signal event struct */
-static struct event *ev_sigterm;
-/** libevent SIGUSR1 signal event struct */
-static struct event *ev_sigusr1;
+/** libevent mgr struct */
+static struct event_mgr *main_event_mgr;
+/** libevent mgr struct */
+static struct event_mgr *rx_event_mgr;
+/** libevent mgr struct */
+static struct event_mgr *tx_event_mgr;
 /** window_interval_sec monitoring window for dhcp relay health checks */
 static int db_update_interval_sec;
 
@@ -222,53 +209,18 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
         db_update_interval_sec = db_update_interval;
 
         evthread_use_pthreads();
-        base = event_base_new();
-        if (base == NULL) {
-            syslog(LOG_ERR, "Could not initialize libevent!\n");
-            break;
-        }
 
-        packet_rx_base = event_base_new();
-        if (packet_rx_base == NULL) {
-            syslog(LOG_ERR, "Could not initialize packet rx base!\n");
+        main_event_mgr = new event_mgr("MAIN");
+        if (main_event_mgr->init_base() != 0)
             break;
-        }
 
-        packet_tx_base = event_base_new();
-        if (packet_tx_base == NULL) {
-            syslog(LOG_ERR, "Could not initialize packet tx base!\n");
+        rx_event_mgr = new event_mgr("RX_PACKET");
+        if (rx_event_mgr->init_base() != 0)
             break;
-        }
 
-        ev_sigint = evsignal_new(base, SIGINT, signal_callback, base);
-        if (ev_sigint == NULL) {
-            syslog(LOG_ERR, "Could not create SIGINT libevent signal!\n");
+        tx_event_mgr = new event_mgr("TX_PACKET");
+        if (tx_event_mgr->init_base() != 0)
             break;
-        }
-
-        ev_sigterm = evsignal_new(base, SIGTERM, signal_callback, base);
-        if (ev_sigterm == NULL) {
-            syslog(LOG_ERR, "Could not create SIGTERM libevent signal!\n");
-            break;
-        }
-
-        ev_sigusr1 = evsignal_new(base, SIGUSR1, signal_callback, base);
-        if (ev_sigusr1 == NULL) {
-            syslog(LOG_ERR, "Could not create SIGUSER1 libevent signal!\n");
-            break;
-        }
-
-        ev_timeout = event_new(base, -1, EV_PERSIST, timeout_callback, base);
-        if (ev_timeout == NULL) {
-            syslog(LOG_ERR, "Could not create libevent timer!\n");
-            break;
-        }
-
-        ev_db_update = event_new(base, -1, EV_PERSIST, db_update_callback, base);
-        if (ev_db_update == NULL) {
-            syslog(LOG_ERR, "Could not create db update timer!\n");
-            break;
-        }
 
         g_events_handle = events_init_publisher("sonic-events-dhcp-relay");
 
@@ -285,25 +237,9 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
  */
 void dhcp_mon_shutdown()
 {
-    event_del(ev_timeout);
-    event_del(ev_db_update);
-    event_del(ev_packet_rx);
-    event_del(ev_packet_tx);
-    event_del(ev_sigint);
-    event_del(ev_sigterm);
-    event_del(ev_sigusr1);
-
-    event_free(ev_timeout);
-    event_free(ev_db_update);
-    event_free(ev_packet_rx);
-    event_free(ev_packet_tx);
-    event_free(ev_sigint);
-    event_free(ev_sigterm);
-    event_free(ev_sigusr1);
-
-    event_base_free(packet_rx_base);
-    event_base_free(packet_tx_base);
-    event_base_free(base);
+    rx_event_mgr->free();
+    tx_event_mgr->free();
+    main_event_mgr->free();
 
     events_deinit_publisher(g_events_handle);
 }
@@ -314,7 +250,7 @@ void dhcp_mon_shutdown()
  * @brief dispatch rx event
  */
 void rx_sub_thread_dispatch() {
-    if (event_base_dispatch(packet_rx_base) != 0) {
+    if (event_base_dispatch(rx_event_mgr->get_base()) != 0) {
         syslog(LOG_ERR, "Could not start rx packet libevent dispatching loop!\n");
     }
 }
@@ -325,7 +261,7 @@ void rx_sub_thread_dispatch() {
  * @brief dispatch tx event
  */
 void tx_sub_thread_dispatch() {
-    if (event_base_dispatch(packet_tx_base) != 0) {
+    if (event_base_dispatch(tx_event_mgr->get_base()) != 0) {
         syslog(LOG_ERR, "Could not start tx packet libevent dispatching loop!\n");
     }
 }
@@ -342,41 +278,54 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
 
     do
     {
-        if (dhcp_devman_start_capture(snaplen, packet_rx_base, packet_tx_base, &ev_packet_rx, &ev_packet_tx) != 0) {
+        if (dhcp_devman_start_capture(snaplen, rx_event_mgr, tx_event_mgr) != 0) {
             break;
         }
 
-        if (evsignal_add(ev_sigint, NULL) != 0) {
-            syslog(LOG_ERR, "Could not add SIGINT libevent signal!\n");
+        struct event *ev_sigint = evsignal_new(main_event_mgr->get_base(), SIGINT, signal_callback, main_event_mgr->get_base());
+        if (ev_sigint == NULL) {
+            syslog(LOG_ERR, "Could not create SIGINT libevent signal!\n");
             break;
         }
 
-        if (evsignal_add(ev_sigterm, NULL) != 0) {
-            syslog(LOG_ERR, "Could not add SIGTERM libevent signal!\n");
+        struct event *ev_sigterm = evsignal_new(main_event_mgr->get_base(), SIGTERM, signal_callback, main_event_mgr->get_base());
+        if (ev_sigterm == NULL) {
+            syslog(LOG_ERR, "Could not create SIGTERM libevent signal!\n");
             break;
         }
 
-        if (evsignal_add(ev_sigusr1, NULL) != 0) {
-            syslog(LOG_ERR, "Could not add SIGUSR1 libevent signal!\n");
+        struct event *ev_sigusr1 = evsignal_new(main_event_mgr->get_base(), SIGUSR1, signal_callback, main_event_mgr->get_base());
+        if (ev_sigusr1 == NULL) {
+            syslog(LOG_ERR, "Could not create SIGUSER1 libevent signal!\n");
+            break;
+        }
+
+        struct event *ev_timeout = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, timeout_callback, main_event_mgr->get_base());
+        if (ev_timeout == NULL) {
+            syslog(LOG_ERR, "Could not create libevent timer!\n");
+            break;
+        }
+
+        struct event *ev_db_update = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, db_update_callback, main_event_mgr->get_base());
+        if (ev_db_update == NULL) {
+            syslog(LOG_ERR, "Could not create db update timer!\n");
             break;
         }
 
         struct timeval event_time = {.tv_sec = window_interval_sec, .tv_usec = 0};
-        if (evtimer_add(ev_timeout, &event_time) != 0) {
-            syslog(LOG_ERR, "Could not add event timer to libevent!\n");
-            break;
-        }
-
         struct timeval db_update_event_time = {.tv_sec = db_update_interval_sec, .tv_usec = 0};
-        if (evtimer_add(ev_db_update, &db_update_event_time) != 0) {
-            syslog(LOG_ERR, "Could not add db update timer to libevent!\n");
-            break;
+
+        if (main_event_mgr->add_event(ev_sigint, NULL) != 0 || main_event_mgr->add_event(ev_sigterm, NULL) != 0 ||
+            main_event_mgr->add_event(ev_sigusr1, NULL) != 0 || main_event_mgr->add_event(ev_timeout, &event_time) != 0||
+            main_event_mgr->add_event(ev_db_update, &db_update_event_time) != 0) {
+            syslog(LOG_ERR, "Failed to add event for main thread");
+            exit(1);
         }
 
         std::thread sub_thread_rx(rx_sub_thread_dispatch);
         std::thread sub_thread_tx(tx_sub_thread_dispatch);
 
-        if (event_base_dispatch(base) != 0) {
+        if (event_base_dispatch(main_event_mgr->get_base()) != 0) {
             syslog(LOG_ERR, "Could not start libevent dispatching loop!\n");
             break;
         }
@@ -396,7 +345,7 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
  */
 void dhcp_mon_stop()
 {
-    event_base_loopbreak(packet_rx_base);
-    event_base_loopbreak(packet_tx_base);
-    event_base_loopexit(base, NULL);
+    event_base_loopbreak(rx_event_mgr->get_base());
+    event_base_loopbreak(tx_event_mgr->get_base());
+    event_base_loopexit(main_event_mgr->get_base(), NULL);
 }
