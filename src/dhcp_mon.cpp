@@ -41,9 +41,9 @@ static struct event_base *packet_tx_base;
 static struct event *ev_timeout = NULL;
 /** libevent timeout event struct */
 static struct event *ev_db_update = NULL;
-/** libevent read packets event struct */
+/** libevent tx event struct */
 static struct event *ev_packet_rx = NULL;
-/** libevent send packets event struct */
+/** libevent rx event struct */
 static struct event *ev_packet_tx = NULL;
 /** libevent SIGINT signal event struct */
 static struct event *ev_sigint;
@@ -221,6 +221,7 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
         dhcp_unhealthy_max_count = max_count;
         db_update_interval_sec = db_update_interval;
 
+        evthread_use_pthreads();
         base = event_base_new();
         if (base == NULL) {
             syslog(LOG_ERR, "Could not initialize libevent!\n");
@@ -341,7 +342,7 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
 
     do
     {
-        if (dhcp_devman_start_capture(snaplen, packet_rx_base, packet_tx_base) != 0) {
+        if (dhcp_devman_start_capture(snaplen, packet_rx_base, packet_tx_base, &ev_packet_rx, &ev_packet_tx) != 0) {
             break;
         }
 
@@ -395,7 +396,7 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
  */
 void dhcp_mon_stop()
 {
+    event_base_loopbreak(packet_rx_base);
+    event_base_loopbreak(packet_tx_base);
     event_base_loopexit(base, NULL);
-    event_base_loopexit(packet_rx_base, NULL);
-    event_base_loopexit(packet_tx_base, NULL);
 }

@@ -169,16 +169,24 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
 }
 
 /**
- * @code dhcp_devman_start_capture(snaplen, base);
+ * @code dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event);
  *
  * @brief start packet capture on the devman interface list
+ *
+ * @param snaplen     packet capture snap length
+ * @param rx_base     libevent base for rx packet
+ * @param tx_base     libevent base for tx packet
+ * @param rx_event    libevent event for tx packet
+ * @param tx_event    libevent event for tx packet
+ *
+ * @return 0 on success, nonzero otherwise
  */
-int dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base)
+int dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event)
 {
     int rv = -1;
 
     if ((dhcp_num_south_intf == 1) && (dhcp_num_north_intf >= 1)) {
-        rv = dhcp_device_start_capture(snaplen, rx_base, tx_base, dual_tor_mode ? loopback_ip : vlan_ip);
+        rv = dhcp_device_start_capture(snaplen, rx_base, tx_base, rx_event, tx_event, dual_tor_mode ? loopback_ip : vlan_ip);
         if (rv != 0) {
             syslog(LOG_ALERT, "Capturing DHCP packets on interface failed");
             exit(1);

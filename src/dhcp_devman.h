@@ -85,16 +85,19 @@ int dhcp_devman_add_intf(const char *name, char intf_type);
 int dhcp_devman_setup_dual_tor_mode(const char *name);
 
 /**
- * @code dhcp_devman_start_capture(snaplen, base);
+ * @code dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event);
  *
  * @brief start packet capture on the devman interface list
  *
- * @param snaplen packet    packet capture snap length
- * @param base              libevent base
+ * @param snaplen     packet capture snap length
+ * @param rx_base     libevent base for rx packet
+ * @param tx_base     libevent base for tx packet
+ * @param rx_event    libevent event for tx packet
+ * @param tx_event    libevent event for tx packet
  *
  * @return 0 on success, nonzero otherwise
  */
-int dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base);
+int dhcp_devman_start_capture(size_t snaplen, struct event_base *rx_base, struct event_base *tx_base, struct event **rx_event, struct event **tx_event);
 
 /**
  * @code dhcp_devman_get_status(check_type, context);
