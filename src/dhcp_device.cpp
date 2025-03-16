@@ -79,7 +79,7 @@ std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> rx_counte
 /* RX per-interface counter data */
 std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counter;
 
-/* db counter name array, message type rage [1, 8] */
+/* db counter name array, message type rage [1, 9] */
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp"
 };
