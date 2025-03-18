@@ -47,6 +47,16 @@ dhcp_device_context_t* dhcp_devman_get_agg_dev()
 }
 
 /**
+ * @code dhcp_devman_get_counter(dhcp_packet_direction_t dir);
+ *
+ * Accessor method
+ */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_devman_get_counter(dhcp_packet_direction_t dir)
+{
+    return dhcp_device_get_counter(dir);
+}
+
+/**
  * @code dhcp_devman_get_mgmt_dev();
  *
  * Accessor method
@@ -114,6 +124,7 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
             strncpy(agg_dev->intf + strlen(AGG_DEV_PREFIX), name, sizeof(agg_dev->intf) - strlen(AGG_DEV_PREFIX) - 1);
             agg_dev->intf[sizeof(agg_dev->intf) - 1] = '\0';
             syslog(LOG_INFO, "dhcpmon add aggregate interface '%s'\n", agg_dev->intf);
+            downstream_if_name = std::string(name);
         }
         std::string if_name;
         if_name.assign(dev->name);
@@ -158,16 +169,22 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
 }
 
 /**
- * @code dhcp_devman_start_capture(snaplen, base);
+ * @code dhcp_devman_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr);
  *
  * @brief start packet capture on the devman interface list
+ *
+ * @param snaplen          packet capture snap length
+ * @param rx_event_mgr     event mgr for rx packet
+ * @param tx_event_mgr     event mgr for tx packet
+ *
+ * @return 0 on success, nonzero otherwise
  */
-int dhcp_devman_start_capture(size_t snaplen, struct event_base *base)
+int dhcp_devman_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr)
 {
     int rv = -1;
 
     if ((dhcp_num_south_intf == 1) && (dhcp_num_north_intf >= 1)) {
-        rv = dhcp_device_start_capture(snaplen, base, dual_tor_mode ? loopback_ip : vlan_ip);
+        rv = dhcp_device_start_capture(snaplen, rx_event_mgr, tx_event_mgr, dual_tor_mode ? loopback_ip : vlan_ip);
         if (rv != 0) {
             syslog(LOG_ALERT, "Capturing DHCP packets on interface failed");
             exit(1);

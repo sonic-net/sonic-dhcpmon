@@ -15,9 +15,18 @@
 #include <event2/listener.h>
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
+#include <event2/thread.h>
 
+#include "subscriberstatetable.h"
+
+/* STATE_DB DHCP counter table name */
+#define DB_COUNTER_TABLE "DHCPV4_COUNTER_TABLE|"
+
+extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 extern bool dual_tor_sock;
 extern std::unordered_map<std::string, struct intf*> intfs;
+/** Downstream interface name */
+extern std::string downstream_if_name;
 
 /**
  * DHCP message types
@@ -75,6 +84,13 @@ typedef enum
     DHCP_MON_CHECK_POSITIVE,    /** Validate that received DORA packets are relayed */
 } dhcp_mon_check_t;
 
+typedef enum
+{
+    DHCP_VALID,
+    DHCP_INVALID,
+    DHCP_UNKNOWN
+} dhcp_mon_packet_valid_type_t;
+
 /** DHCP device (interface) context */
 typedef struct
 {
@@ -89,6 +105,8 @@ typedef struct
     uint64_t counters[DHCP_COUNTERS_COUNT][DHCP_DIR_COUNT][DHCP_MESSAGE_TYPE_COUNT];
                                     /** current/snapshot counters of DHCP packets */
 } dhcp_device_context_t;
+
+extern std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
 
 /**
  * @code initialize_intf_mac_and_ip_addr(context);
@@ -123,6 +141,13 @@ int dhcp_device_get_ip(dhcp_device_context_t *context, in_addr_t *ip);
 dhcp_device_context_t* dhcp_device_get_aggregate_context();
 
 /**
+ * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
+ * @brief Accessor method
+ * @return pointer to counter
+ */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir);
+
+/**
  * @code dhcp_device_init(context, intf, is_uplink);
  *
  * @brief initializes device (interface) that handles packet capture per interface.
@@ -138,17 +163,18 @@ int dhcp_device_init(dhcp_device_context_t **context,
                      uint8_t is_uplink);
 
 /**
- * @code dhcp_device_start_capture(snaplen, base, giaddr_ip);
+ * @code int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
  *
  * @brief starts packet capture on this interface
  *
  * @param snaplen           length of packet capture
- * @param base              pointer to libevent base
+ * @param rx_event_mgr      evnet mgr for rx event
+ * @param tx_event_mgr      event mgr for for tx event
  * @param giaddr_ip         gateway IP address
  *
  * @return 0 on success, otherwise for failure
  */
-int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t giaddr_ip);
+int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
 
 /**
  * @code dhcp_device_shutdown(context);
@@ -194,5 +220,39 @@ void dhcp_device_update_snapshot(dhcp_device_context_t *context);
  * @return none
  */
 void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type);
+
+/**
+ * @code                void initialize_db_counter(std::string &ifname)
+ * @brief               Initialize the counter in counters_db with interface name
+ * @param ifname        interface name
+ * @return              none
+ */
+void initialize_db_counters(std::string &ifname);
+
+/**
+ * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+ * @brief Initialize cache counter per interface
+ * @param counters         counter data
+ * @param interface_name   string value of interface name
+ */
+void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+
+/**
+ * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
+ * @brief               Increase cache counter
+ * @param ifname        Interface name
+ * @param type          Packet type
+ * @param dir           Packet direction
+ * @return              none
+ */
+void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
+
+/**
+ * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
+ * @brief               Generate JSON string by counter dict
+ * @param counter       Counter dict
+ * @return              none
+ */
+std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter);
 
 #endif /* DHCP_DEVICE_H_ */

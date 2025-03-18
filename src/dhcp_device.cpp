@@ -22,11 +22,11 @@
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
 #include <netpacket/packet.h>
-#include "subscriberstatetable.h"
 #include "select.h"
 
 #include "dhcp_devman.h"
 #include "dhcp_device.h"
+#include "event_mgr.h"
 
 /** Counter print width */
 #define DHCP_COUNTER_WIDTH  9
@@ -45,7 +45,6 @@
 #define DHCP_GIADDR_OFFSET 24
 /** Offset of magic cookie */
 #define MAGIC_COOKIE_OFFSET 236
-#define CLIENT_IF_PREFIX "Ethernet"
 /** 32-bit decimal of 99.130.83.99 (indicate DHCP packets), Refer to RFC 2131 */
 #define DHCP_MAGIC_COOKIE 1669485411
 
@@ -60,9 +59,10 @@
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0);
+std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
-            mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
-        );
+    mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
+);
 
 /* interface to vlan mapping */
 std::unordered_map<std::string, std::string> vlan_map;
@@ -72,6 +72,17 @@ std::unordered_map<std::string, std::string> portchan_map;
 
 /* interface to mgmt port mapping */
 std::unordered_map<std::string, std::string> mgmt_map;
+
+/* RX per-interface counter data */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> rx_counter;
+
+/* RX per-interface counter data */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counter;
+
+/* db counter name array, message type rage [1, 9] */
+std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
+    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp"
+};
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
  * This program is obtained using the following command tcpdump:
@@ -162,20 +173,56 @@ static dhcp_message_type_t monitored_msgs[] = {
     DHCP_MESSAGE_TYPE_ACK
 };
 
+/** Downstream interface name */
+std::string downstream_if_name;
+
 /** update ethernet interface to vlan map
  *  VLAN_MEMBER|Vlan1000|Ethernet48
  */
 void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("VLAN_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
+    std::unordered_set<std::string> vlans;
     for (auto &itr : keys) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto vlan = itr.substr(first + 1, second - first - 1);
         auto interface = itr.substr(second + 1);
         vlan_map[interface] = vlan;
+        vlans.insert(vlan);
         syslog(LOG_INFO, "add <%s, %s> into interface vlan map\n", interface.c_str(), vlan.c_str());
+        std::string ifname = interface;
+        initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
     }
+    for (auto ifname : vlans) {
+        initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
+    }
+}
+
+/**
+ * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+ * @brief Initialize cache counter per interface
+ * @param counters         counter data
+ * @param interface_name   string value of interface name
+ */
+void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name) {
+    auto counter = counters.find(interface_name);
+    if (counter != counters.end()) {
+        return;
+    }
+
+    std::unordered_map<uint8_t, uint64_t> new_counter;
+    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+        new_counter[i] = 0;
+    }
+
+    counters[interface_name] = new_counter;
 }
 
 /** update ethernet interface to port-channel map
@@ -184,13 +231,26 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
 void update_portchannel_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
     auto match_pattern = std::string("PORTCHANNEL_MEMBER|*");
     auto keys = db_conn->keys(match_pattern);
+    std::unordered_set<std::string> portchannels;
     for (auto &itr : keys) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto portchannel = itr.substr(first + 1, second - first - 1);
         auto interface = itr.substr(second + 1);
         portchan_map[interface] = portchannel;
+        portchannels.insert(portchannel);
         syslog(LOG_INFO, "add <%s, %s> into interface port-channel map\n", interface.c_str(), portchannel.c_str());
+        std::string ifname = interface;
+        initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
+    }
+    for (auto ifname : portchannels) {
+        initialize_db_counters(ifname);
+
+        initialize_cache_counter(rx_counter, ifname);
+        initialize_cache_counter(tx_counter, ifname);
     }
 }
 
@@ -201,7 +261,78 @@ void update_mgmt_mapping() {
     if (mgmt) {
         auto name = std::string(mgmt->intf);
         mgmt_map[name] = name;
+        initialize_db_counters(name);
+
+        initialize_cache_counter(rx_counter, name);
+        initialize_cache_counter(tx_counter, name);
     }
+}
+
+/**
+ * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
+ * @brief               Generate JSON string by counter dict
+ * @param counter       Counter dict
+ * @return              none
+ */
+std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter) {
+    std::string res;
+    res.reserve(300);
+    res.append("{");
+    for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+        auto value = std::to_string(counter == nullptr ? 0 : counter->at(i));
+        auto json_value = "'" + db_counter_name[i] + "':'" + value + "'";
+        res.append(json_value);
+        if (i < DHCP_MESSAGE_TYPE_COUNT - 1) {
+            res.append(",");
+        }
+    }
+    res.append("}");
+    return res;
+}
+
+/**
+ * @code                void initialize_db_counters(std::string &ifname)
+ * @brief               Initialize the counter in counters_db with interface name
+ * @param ifname        interface name
+ * @return              none
+ */
+void initialize_db_counters(std::string &ifname)
+{
+    /**
+     * Only add downstream prefix for non-downstream interface
+     */
+    std::string table_name;
+    if (downstream_if_name.compare(ifname) != 0) {
+        table_name = DB_COUNTER_TABLE + downstream_if_name + "_" + ifname;
+    } else {
+        table_name = DB_COUNTER_TABLE + ifname;
+    }
+    auto init_value = generate_json_string(nullptr);
+    mCountersDbPtr->hset(table_name, "RX", init_value);
+    mCountersDbPtr->hset(table_name, "TX", init_value);
+}
+
+/**
+ * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
+ * @brief               Increase cache counter
+ * @param ifname        Interface name
+ * @param type          Packet type
+ * @param dir           Packet direction
+ * @return              none
+ */
+void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
+{
+    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
+        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
+        type = 0; // treate it as unknown counter
+    }
+    auto &counter_map = (dir == DHCP_RX) ? rx_counter : tx_counter;
+    auto counter = counter_map.find(ifname);
+    if (counter == counter_map.end()) {
+        syslog(LOG_WARNING, "Cannot find %s counter for %s\n", (dir == DHCP_RX ? "RX" : "TX"), ifname.c_str());
+        return;
+    }
+    counter->second[type]++;
 }
 
 dhcp_device_context_t *find_device_context(std::unordered_map<std::string, struct intf*> *intfs, std::string if_name) {
@@ -220,6 +351,7 @@ static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msg
  *
  * @brief handle the logic related to DHCP option 53
  *
+ * @param src_if        Source pyhsical interface name
  * @param context       Device (interface) context
  * @param dhcp_option   pointer to DHCP option buffer space
  * @param dir           packet direction
@@ -228,13 +360,17 @@ static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msg
  *
  * @return none
  */
-static void handle_dhcp_option_53(dhcp_device_context_t *context,
+static void handle_dhcp_option_53(std::string &sock_if,
+                                  dhcp_device_context_t *context,
                                   const u_char *dhcp_option,
                                   dhcp_packet_direction_t dir,
                                   struct ip *iphdr,
                                   uint8_t *dhcphdr)
 {
     in_addr_t giaddr;
+    std::string context_if(context->intf);
+    dhcp_mon_packet_valid_type_t packet_valid_type = DHCP_INVALID;
+
     switch (dhcp_option[2])
     {
     // DHCP messages send by client
@@ -245,39 +381,74 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
     case DHCP_MESSAGE_TYPE_INFORM:
         giaddr = ntohl(dhcphdr[DHCP_GIADDR_OFFSET] << 24 | dhcphdr[DHCP_GIADDR_OFFSET + 1] << 16 |
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
+        /**
+         * For packets from DHCP client to DHCP server, wouldn't count packets which already have other giaddr
+         * 
+         * TX packets: means relayed to server. Because one dhcpmon process would capture all packets go through uplink interface, hence
+         * we need to compare giaddr to make sure packets are related to current gateway, wouldn'd count packets with giaddr not equal to current gateway
+         * 
+         * RX packets, means received from client. Even if the packets here are all related on downstream Vlan, but TX packets with giaddr not equal
+         * to current gateway wouldn't be counted, to avoid incorrect counting,  wouldn't count RX packets which already have other giaddr
+         * 
+         * TODO add support to count packets with giaddr no equal to current gateway
+         */
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
-            (!context->is_uplink && dir == DHCP_RX && iphdr->ip_dst.s_addr == INADDR_BROADCAST)) {
-            context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            (!context->is_uplink && dir == DHCP_RX && (iphdr->ip_dst.s_addr == INADDR_BROADCAST || iphdr->ip_dst.s_addr == context->giaddr_ip) && (giaddr == 0 || context->giaddr_ip == giaddr))) {
+            packet_valid_type = DHCP_VALID;
         }
         break;
     // DHCP messages send by server
     case DHCP_MESSAGE_TYPE_OFFER:
     case DHCP_MESSAGE_TYPE_ACK:
     case DHCP_MESSAGE_TYPE_NAK:
+    /**
+     * For packets from DHCP server to DHCP client, would count packets which already have other giaddr
+     * 
+     * RX packets: means received from server. If dst ip is gateway, means the packets must target to current gateway, no need to check giaddr in dhcphdr
+     * 
+     * TX packets: means relayed to client. The packets caputred here must related to corresponding gateway, hence no need to compare giaddr in dhcphdr
+     */
         if ((context->giaddr_ip == iphdr->ip_dst.s_addr && context->is_uplink && dir == DHCP_RX) ||
             (!context->is_uplink && dir == DHCP_TX)) {
-            context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            packet_valid_type = DHCP_VALID;
         }
         break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
+        packet_valid_type = DHCP_UNKNOWN;
         break;
+    }
+
+    if (packet_valid_type == DHCP_INVALID) {
+        return;
+    }
+
+    if (context_if.compare(sock_if) != 0) {
+        // count for incomming physical interfaces
+        increase_cache_counter(sock_if, dhcp_option[2], dir);
+    } else {
+        // count for device context interfaces (-d -u -m)
+        increase_cache_counter(context_if, dhcp_option[2], dir);
+        context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+        aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
     }
 }
 
 /**
- * @code client_packet_handler(dhcp_device_context_t *context, ssize_t buffer_sz);
+ * @code client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
+ *                             ssize_t buffer_sz, dhcp_packet_direction_t dir);
  *
  * @brief packet handler to process received rx and tx packets
  *
+ * @param sock_if       socket interface
  * @param context       pointer to device (interface) context
+ * @param buffer        DHCP packet
  * @param buffer_sz     buffer that stores received packet data
+ * @param dir           DHCP packet direction
  *
  * @return none
  */
-static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffer,
+static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
                                   ssize_t buffer_sz, dhcp_packet_direction_t dir)
 {
     struct ip *iphdr = (struct ip*) (buffer + IP_START_OFFSET);
@@ -298,13 +469,14 @@ static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffe
         if (magic_cookie != DHCP_MAGIC_COOKIE) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
+            increase_cache_counter(sock_if, BOOTP_MESSAGE, dir);
             return;
         }
         int offset = 0;
         while ((offset < (dhcp_option_sz + 1)) && dhcp_option[offset] != 255) {
             if (dhcp_option[offset] == OPTION_DHCP_MESSAGE_TYPE) {
                 if (offset < (dhcp_option_sz + 2)) {
-                    handle_dhcp_option_53(context, &dhcp_option[offset], dir, iphdr, dhcphdr);
+                    handle_dhcp_option_53(sock_if, context, &dhcp_option[offset], dir, iphdr, dhcphdr);
                 }
                 break; // break while loop since we are only interested in Option 53
             }
@@ -342,6 +514,7 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
             if (mgmt != mgmt_map.end()) {
                 return find_device_context(devices, mgmt->second);
             }
+            return find_device_context(devices, ifname);
         }
     }
     return NULL;
@@ -377,7 +550,12 @@ static void read_tx_callback(int fd, short event, void *arg)
         std::string intf(interfaceName);
         context = find_device_context(devices, intf);
         if (context) {
-            client_packet_handler(context, tx_recv_buffer, buffer_sz, DHCP_TX);
+            client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
+        } else {
+            context = interface_to_dev_context(devices, intf);
+            if (context) {
+                client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
+            }
         }
     }
 }
@@ -409,10 +587,15 @@ static void read_rx_callback(int fd, short event, void *arg)
             continue;
         }
         std::string intf(interfaceName);
-        context = interface_to_dev_context(devices, intf);
+        context = find_device_context(devices, intf);
         if (context) {
-            client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
-        }
+            client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
+        } else {
+            context = interface_to_dev_context(devices, intf);
+            if (context) {
+                client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
+            }
+        } 
     }
 }
 
@@ -730,6 +913,16 @@ dhcp_device_context_t* dhcp_device_get_aggregate_context()
 }
 
 /**
+ * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
+ * @brief Accessor method
+ * @return pointer to counter
+ */
+std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir)
+{
+    return (dir == DHCP_RX ? &rx_counter : &tx_counter);
+}
+
+/**
  * @code dhcp_device_init(context, intf, is_uplink);
  *
  * @brief initializes device (interface) that handles packet capture per interface.
@@ -762,15 +955,20 @@ int dhcp_device_init(dhcp_device_context_t **context, const char *intf, uint8_t 
 }
 
 /**
- * @code dhcp_device_start_capture(snaplen, base, giaddr_ip);
+ * @code int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
  *
  * @brief starts packet capture on this interface
+ *
+ * @param snaplen           length of packet capture
+ * @param rx_event_mgr      evnet mgr for rx event
+ * @param tx_event_mgr      event mgr for for tx event
+ * @param giaddr_ip         gateway IP address
+ *
+ * @return 0 on success, otherwise for failure
  */
-int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t giaddr_ip)
+int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip)
 {
     int rv = -1;
-    struct event *rx_ev;
-    struct event *tx_ev;
     int rx_sock = -1, tx_sock = -1;
 
     do {
@@ -809,15 +1007,18 @@ int dhcp_device_start_capture(size_t snaplen, struct event_base *base, in_addr_t
             exit(1);
         }
 
-        rx_ev = event_new(base, rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
-        tx_ev = event_new(base, tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
+        struct event *rx_event = event_new(rx_event_mgr->get_base(), rx_sock, EV_READ | EV_PERSIST, read_rx_callback, &intfs);
+        struct event *tx_event = event_new(tx_event_mgr->get_base(), tx_sock, EV_READ | EV_PERSIST, read_tx_callback, &intfs);
 
-        if (rx_ev == NULL || tx_ev == NULL) {
+        if (rx_event == NULL || tx_event == NULL) {
             syslog(LOG_ALERT, "event_new: failed to allocate memory for libevent event '%s'\n", strerror(errno));
             exit(1);
         }
-        event_add(rx_ev, NULL);
-        event_add(tx_ev, NULL);
+
+        if (rx_event_mgr->add_event(rx_event, NULL) != 0 || tx_event_mgr->add_event(tx_event, NULL) != 0) {
+            syslog(LOG_ERR, "add_event: failed to add event for packets tx/rx\n");
+            exit(1);
+        }
 
         rv = 0;
     } while (0);
