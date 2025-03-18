@@ -33,11 +33,11 @@ static int dhcp_unhealthy_max_count = 10;
 /** dhcpmon debug mode control flag */
 static bool debug_on = false;
 /** libevent mgr struct */
-static struct event_mgr *main_event_mgr;
+static struct event_mgr *main_event_mgr = NULL;
 /** libevent mgr struct */
-static struct event_mgr *rx_event_mgr;
+static struct event_mgr *rx_event_mgr = NULL;
 /** libevent mgr struct */
-static struct event_mgr *tx_event_mgr;
+static struct event_mgr *tx_event_mgr = NULL;
 /** window_interval_sec monitoring window for dhcp relay health checks */
 static int db_update_interval_sec;
 
@@ -208,6 +208,10 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
         dhcp_unhealthy_max_count = max_count;
         db_update_interval_sec = db_update_interval;
 
+        if (main_event_mgr != NULL || rx_event_mgr != NULL || tx_event_mgr != NULL) {
+            syslog(LOG_ERR, "Duplicated invoking of dhcp_mon_init, cannot determine whether mgr obj is expected\n");
+            break;
+        }
         evthread_use_pthreads();
 
         main_event_mgr = new event_mgr("MAIN");
@@ -231,15 +235,29 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
 }
 
 /**
+ * @code free_event_mgr(struct event_mgr *mgr);
+ *
+ * @brief Free event manager
+ * 
+ * @param mgr pointer to event manager
+ */
+void free_event_mgr(struct event_mgr *mgr) {
+    if (mgr != NULL) {
+        mgr -> free();
+        delete mgr;
+    }
+}
+
+/**
  * @code dhcp_mon_shutdown();
  *
  * @brief shuts down libevent loop
  */
 void dhcp_mon_shutdown()
 {
-    rx_event_mgr->free();
-    tx_event_mgr->free();
-    main_event_mgr->free();
+    free_event_mgr(rx_event_mgr);
+    free_event_mgr(tx_event_mgr);
+    free_event_mgr(main_event_mgr);
 
     events_deinit_publisher(g_events_handle);
 }

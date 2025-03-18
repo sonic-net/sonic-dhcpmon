@@ -45,6 +45,15 @@ void dhcp_mon_shutdown();
 int dhcp_mon_start(size_t snaplen, bool debug);
 
 /**
+ * @code free_event_mgr(struct event_mgr *mgr);
+ *
+ * @brief Free event manager
+ * 
+ * @param mgr pointer to event manager
+ */
+void free_event_mgr(struct event_mgr *mgr);
+
+/**
  * @code dhcp_mon_stop();
  *
  * @brief stop monitoring DHCP Relay
