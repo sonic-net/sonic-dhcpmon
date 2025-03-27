@@ -303,7 +303,7 @@ void initialize_db_counters(std::string &ifname)
      */
     std::string table_name;
     if (downstream_if_name.compare(ifname) != 0) {
-        table_name = DB_COUNTER_TABLE + downstream_if_name + "_" + ifname;
+        table_name = DB_COUNTER_TABLE + downstream_if_name + "|" + ifname;
     } else {
         table_name = DB_COUNTER_TABLE + ifname;
     }
