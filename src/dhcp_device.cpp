@@ -303,9 +303,9 @@ void initialize_db_counters(std::string &ifname)
      */
     std::string table_name;
     if (downstream_if_name.compare(ifname) != 0) {
-        table_name = DB_COUNTER_TABLE + downstream_if_name + "|" + ifname;
+        table_name = DB_COUNTER_TABLE_PREFIX + downstream_if_name + DB_SEPARATOR + ifname;
     } else {
-        table_name = DB_COUNTER_TABLE + ifname;
+        table_name = DB_COUNTER_TABLE_PREFIX + ifname;
     }
     auto init_value = generate_json_string(nullptr);
     mCountersDbPtr->hset(table_name, "RX", init_value);
