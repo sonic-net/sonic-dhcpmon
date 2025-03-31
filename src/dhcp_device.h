@@ -21,7 +21,7 @@
 
 /* COUNTERS_DB DHCP counter table name */
 #define DB_COUNTER_TABLE_PREFIX "DHCPV4_COUNTER_TABLE:"
-#define DB_SEPARATOR ":"
+#define COUNTERS_DB_SEPARATOR ":"
 
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 extern bool dual_tor_sock;

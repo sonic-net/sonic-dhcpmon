@@ -167,7 +167,7 @@ void update_counter(dhcp_packet_direction_t dir) {
          * Only add downstream prefix for non-downstream interface
          */
         if (downstream_if_name.compare(interface_name) != 0) {
-            table_name = DB_COUNTER_TABLE_PREFIX + downstream_if_name + DB_SEPARATOR + interface_name;
+            table_name = DB_COUNTER_TABLE_PREFIX + downstream_if_name + COUNTERS_DB_SEPARATOR + interface_name;
         } else {
             table_name = DB_COUNTER_TABLE_PREFIX + interface_name;
         }
