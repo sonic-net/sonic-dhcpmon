@@ -19,8 +19,9 @@
 
 #include "subscriberstatetable.h"
 
-/* STATE_DB DHCP counter table name */
-#define DB_COUNTER_TABLE "DHCPV4_COUNTER_TABLE|"
+/* COUNTERS_DB DHCP counter table name */
+#define DB_COUNTER_TABLE_PREFIX "DHCPV4_COUNTER_TABLE:"
+#define COUNTERS_DB_SEPARATOR ":"
 
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 extern bool dual_tor_sock;
