@@ -17,7 +17,6 @@
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <syslog.h>
 #include <inttypes.h>
 #include <libexplain/ioctl.h>
 #include <linux/filter.h>
@@ -76,7 +75,7 @@ std::unordered_map<std::string, std::string> mgmt_map;
 /* RX per-interface counter data */
 std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> rx_counter;
 
-/* RX per-interface counter data */
+/* TX per-interface counter data */
 std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counter;
 
 /* db counter name array, message type rage [1, 9] */
@@ -301,12 +300,7 @@ void initialize_db_counters(std::string &ifname)
     /**
      * Only add downstream prefix for non-downstream interface
      */
-    std::string table_name;
-    if (downstream_if_name.compare(ifname) != 0) {
-        table_name = DB_COUNTER_TABLE_PREFIX + downstream_if_name + COUNTERS_DB_SEPARATOR + ifname;
-    } else {
-        table_name = DB_COUNTER_TABLE_PREFIX + ifname;
-    }
+    std::string table_name = construct_counter_db_table_key(ifname);
     auto init_value = generate_json_string(nullptr);
     mCountersDbPtr->hset(table_name, "RX", init_value);
     mCountersDbPtr->hset(table_name, "TX", init_value);
