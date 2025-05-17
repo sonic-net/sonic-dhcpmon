@@ -9,8 +9,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/syscall.h>
-#include <syslog.h>
 #include <assert.h>
+#include <chrono>
 
 #include "dhcp_mon.h"
 #include "dhcp_devman.h"
@@ -38,8 +38,28 @@ static struct event_mgr *main_event_mgr = NULL;
 static struct event_mgr *rx_event_mgr = NULL;
 /** libevent mgr struct */
 static struct event_mgr *tx_event_mgr = NULL;
+/** event to sync RX cache counter from COUNTERS_DB */
+struct event *ev_rx_cache_counter_update = NULL;
+/** event to sync RX cache counter from COUNTERS_DB */
+struct event *ev_tx_cache_counter_update = NULL;
 /** window_interval_sec monitoring window for dhcp relay health checks */
 static int db_update_interval_sec;
+/** When clearing counter is invoked, dhcpmon wouldn't write cache counter to COUNTERS_DB until it receives a signal,
+ *  in case recover signal is not sent by cli, add timeout 5s here. After 5s, dhcpmon would update COUNTERS_DB as previous.
+ */
+static constexpr int clear_counter_timeout = 5;
+/** Flag to determine whether to write cache counter to COUNTERS_DB.
+ *  0b11 - write (rx and tx cache counter are both up to date)
+ *  0b00 - don't write (Need to sync rx and tx cache counter from COUNTERS_DB)
+ *  0b01 - don't write (rx cache counter is up to date, but need to sync tx cache counter from COUNTERS_DB)
+ *  0b10 - don't write (tx cache counter is up to date, but need to sync rx cache counter from COUNTERS_DB) */
+static int write_counter_to_db = 0b11;
+/** Mutex lock to moidfy write_counter_to_db for different threads */
+static std::mutex write_counter_mutex;
+/** Latest timestamp of writing cache counter to COUNTERS_DB */
+static std::chrono::steady_clock::time_point last_update_time{};
+/** Default time point to check whether a time_point has been initialized or updated yet. */
+static const std::chrono::steady_clock::time_point default_time_point{};
 
 event_handle_t g_events_handle;
 
@@ -78,6 +98,124 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
     if ((fd == SIGTERM) || (fd == SIGINT)) {
         dhcp_mon_stop();
     }
+    if (fd == SIGUSR1) {
+        // Set write_counter_to_db to 0 to make sure dhcpmon wouldn't write counter data to COUNTERS_DB because
+        // we need to sync cache counter from COUNTERS_DB
+        syslog(LOG_INFO, "Received signal to stop writing DB counter\n");
+        std::lock_guard<std::mutex> lock(write_counter_mutex);
+        write_counter_to_db = 0b00;
+        mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_if_name, "pause_write_to_db", "done");
+        syslog(LOG_INFO, "Stopped writing DB counter\n");
+    }
+    if (fd == SIGUSR2) {
+        event_active(ev_rx_cache_counter_update, 0, 0);
+        event_active(ev_tx_cache_counter_update, 0, 0);
+    }
+}
+
+/**
+ * @code update_cache_counter(evutil_socket_t fd, short event, void *arg);
+ *
+ * @brief Callback function to update cache counter from DB counter.
+ *
+ * @param fd        libevent socket
+ * @param event     event triggered
+ * @param arg       pointer to user provided context (libevent base)
+ *
+ * @return none
+ */
+static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
+    if (write_counter_to_db != 0b00) {
+        syslog(LOG_ERR, "Write DB counter from cache counter hasn't stop, cannot sync cache counter from DB counter\n");
+        return;
+    }
+    dhcp_packet_direction_t* dir_ptr = reinterpret_cast<dhcp_packet_direction_t*>(arg);
+    dhcp_packet_direction_t dir = *dir_ptr;
+    std::string dir_str = (dir == DHCP_RX ? "RX" : "TX");
+
+    syslog(LOG_INFO, "Update %s cache counter\n", dir_str.c_str());
+
+    auto match_pattern = COUNTERS_DB_COUNTER_TABLE_PREFIX + downstream_if_name + "*";
+    std::lock_guard<std::mutex> lock(write_counter_mutex);
+    auto keys = mCountersDbPtr->keys(match_pattern);
+
+    // Store interfaces in DB counter table
+    std::unordered_set<std::string> updated_intfs;
+
+    auto counter_map = dhcp_device_get_counter(dir);
+    for (auto &itr : keys) {
+        std::string interface;
+        auto first = itr.find_first_of(":");
+        auto last = itr.find_last_of(":");
+        if (first == last) {
+            // Vlan interfaces
+            interface = itr.substr(first + 1, itr.length() - first);
+        } else {
+            // Physical interfaces
+            interface = itr.substr(last + 1, itr.length() - last);
+        }
+
+        auto interface_key = construct_counter_db_table_key(interface);
+        auto counter_json = mCountersDbPtr->hget(interface_key, dir_str);
+        std::replace(counter_json.get()->begin(), counter_json.get()->end(),'\'', '\"');
+        Json::Value root;
+        if (!parse_json_str(counter_json.get(), &root)) {
+            syslog(LOG_WARNING, "Failed to parse DB counter for %s, skip sync it from DB counter to cache counter", interface.c_str());
+            continue;
+        }
+
+        auto counter = counter_map->find(interface);
+        if (counter == counter_map->end()) {
+            // Didn't have this interface in counter map, re-init it
+            syslog(LOG_INFO, "Didn't find %s in cache counter, init it now\n", interface.c_str());
+            initialize_cache_counter(*counter_map, interface);
+        }
+
+        for (int i=0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+            const auto& type = db_counter_name[i];
+            uint64_t count;
+            // If [corresponding DB counter doesn't exist] or [failed to parse count value], set it to 0.
+            // Else, set it to value parsed.
+            if (!root.isMember(type)) {
+                syslog(LOG_WARNING, "DHCP type %s is not find in %s DB counter for %s, set it to 0\n", type.c_str(),
+                       dir_str.c_str(), interface.c_str());
+                count = 0;
+            } else if (!root[type].isString()) {
+                syslog(LOG_WARNING, "Value type for %s in %s %s DB counter is not string, set it to 0\n", type.c_str(),
+                       interface.c_str(), dir_str.c_str());
+                count = 0;
+            } else {
+                std::string str_count_val = root[type].asString();
+                if (!parse_uint64_from_str(str_count_val, count)) {
+                    syslog(LOG_WARNING, "Failed to parse %s count value from DB for %s %s, set it to 0\n",
+                           dir_str.c_str(), interface.c_str(), type.c_str());
+                    count = 0;
+                }
+            }
+            (*counter_map)[interface][i] = count;
+            syslog(LOG_INFO, "Sync cache counter for %s %s to %lu\n", interface.c_str(), type.c_str(), count);
+        }
+        updated_intfs.insert(interface);
+    }
+
+    // Loop cache counter map, delete counter that doesn't appear in DB counter
+    for (auto it = counter_map->begin(); it != counter_map->end();) {
+        if (updated_intfs.find(it->first) == updated_intfs.end()) {
+            // Not such interface in DB counter, need to delete from cache counter
+            syslog(LOG_INFO, "Remove %s in cache counter since it doesn't appear in DB counter\n", it->first.c_str());
+            it = counter_map->erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Update write_counter_to_db. If RX updated, the last bit is set to 1; if TX updated, the first bit is set to 1;
+    int dir_value = static_cast<int>(dir);
+    write_counter_to_db |= (1 << dir_value);
+
+    mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_if_name,
+                      std::string(dir == DHCP_RX ? "rx" : "tx") + "_cache_update", "done");
+    syslog(LOG_ALERT, "Update %s cache counter done", dir_str.c_str());
 }
 
 /**
@@ -158,7 +296,6 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
  */
 void update_counter(dhcp_packet_direction_t dir) {
     std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* counter = dhcp_device_get_counter(dir);
-    std::string table_name;
     for (const auto& outer_pair : *counter) {
         const std::string interface_name = outer_pair.first;
         const auto* inner_map = &outer_pair.second;
@@ -166,11 +303,7 @@ void update_counter(dhcp_packet_direction_t dir) {
         /**
          * Only add downstream prefix for non-downstream interface
          */
-        if (downstream_if_name.compare(interface_name) != 0) {
-            table_name = DB_COUNTER_TABLE_PREFIX + downstream_if_name + COUNTERS_DB_SEPARATOR + interface_name;
-        } else {
-            table_name = DB_COUNTER_TABLE_PREFIX + interface_name;
-        }
+        std::string table_name = construct_counter_db_table_key(interface_name);
         mCountersDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", value);
     }
 }
@@ -188,8 +321,25 @@ void update_counter(dhcp_packet_direction_t dir) {
  */
 static void db_update_callback(evutil_socket_t fd, short event, void *arg)
 {
+    syslog(LOG_INFO, "Start to write DB counter\n");
+    std::lock_guard<std::mutex> lock(write_counter_mutex);
+    // If write_counter_to_db == 0b11, means that there is no clear counter ongoing, we can directly update DB counter from cache counter.
+    // Else, we cannot write DB counter except pause time timeout.
+    if (write_counter_to_db != 0b11 && last_update_time != default_time_point) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_update_time);
+        if (elapsed.count() >= clear_counter_timeout) {
+            syslog(LOG_ALERT, "Timeout for lock writing to DB\n");
+            write_counter_to_db = 0b11;
+        } else {
+            syslog(LOG_INFO, "Clear counter is ongoing, skip write counter to DB\n");
+            return;
+        }
+    }
+    last_update_time = std::chrono::steady_clock::now();
     update_counter(DHCP_RX);
     update_counter(DHCP_TX);
+    syslog(LOG_INFO, "Write DB counter done\n");
 }
 
 /**
@@ -318,6 +468,17 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             break;
         }
 
+        struct event *ev_sigusr2 = evsignal_new(main_event_mgr->get_base(), SIGUSR2, signal_callback, main_event_mgr->get_base());
+        if (ev_sigusr2 == NULL) {
+            syslog(LOG_ERR, "Could not create SIGUSR2 libevent signal!\n");
+            break;
+        }
+
+        dhcp_packet_direction_t temp_dir_rx = DHCP_RX;
+        ev_rx_cache_counter_update = event_new(rx_event_mgr->get_base(), -1, 0, update_cache_counter, reinterpret_cast<void*>(&temp_dir_rx));
+        dhcp_packet_direction_t temp_dir_tx = DHCP_TX;
+        ev_tx_cache_counter_update = event_new(tx_event_mgr->get_base(), -1, 0, update_cache_counter, reinterpret_cast<void*>(&temp_dir_tx));
+
         struct event *ev_timeout = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, timeout_callback, main_event_mgr->get_base());
         if (ev_timeout == NULL) {
             syslog(LOG_ERR, "Could not create libevent timer!\n");
@@ -335,8 +496,14 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
 
         if (main_event_mgr->add_event(ev_sigint, NULL) != 0 || main_event_mgr->add_event(ev_sigterm, NULL) != 0 ||
             main_event_mgr->add_event(ev_sigusr1, NULL) != 0 || main_event_mgr->add_event(ev_timeout, &event_time) != 0||
-            main_event_mgr->add_event(ev_db_update, &db_update_event_time) != 0) {
+            main_event_mgr->add_event(ev_db_update, &db_update_event_time) != 0 ||
+            main_event_mgr->add_event(ev_sigusr2, NULL) != 0) {
             syslog(LOG_ERR, "Failed to add event for main thread");
+            exit(1);
+        }
+
+        if(rx_event_mgr->add_event(ev_rx_cache_counter_update, NULL) != 0 || tx_event_mgr->add_event(ev_tx_cache_counter_update, NULL) != 0) {
+            syslog(LOG_ERR, "Failed to add RX/TX cache counter callback event for rx/tx thread");
             exit(1);
         }
 

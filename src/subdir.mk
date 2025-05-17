@@ -6,6 +6,7 @@ C_SRCS += \
 ../src/dhcp_device.cpp \
 ../src/dhcp_devman.cpp \
 ../src/dhcp_mon.cpp \
+../src/util.cpp \
 ../src/main.cpp 
 
 OBJS += \
@@ -13,6 +14,7 @@ OBJS += \
 ./src/dhcp_device.o \
 ./src/dhcp_devman.o \
 ./src/dhcp_mon.o \
+./src/util.o \
 ./src/main.o 
 
 C_DEPS += \
@@ -20,6 +22,7 @@ C_DEPS += \
 ./src/dhcp_device.d \
 ./src/dhcp_devman.d \
 ./src/dhcp_mon.d \
+./src/util.d \
 ./src/main.d 
 
 
