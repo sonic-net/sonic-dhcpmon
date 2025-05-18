@@ -145,14 +145,22 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
     auto counter_map = dhcp_device_get_counter(dir);
     for (auto &itr : keys) {
         std::string interface;
+        std::string vlan;
         auto first = itr.find_first_of(":");
         auto last = itr.find_last_of(":");
         if (first == last) {
             // Vlan interfaces
             interface = itr.substr(first + 1, itr.length() - first);
+            vlan = itr.substr(first + 1, itr.length() - first);
         } else {
             // Physical interfaces
             interface = itr.substr(last + 1, itr.length() - last);
+            vlan = itr.substr(first + 1, last - first - 1);
+        }
+
+        if (vlan.compare(downstream_if_name) != 0) {
+            syslog(LOG_INFO, "Skip [%s - %s] since it's not related to current downstream interface\n", vlan.c_str(), interface.c_str());
+            continue;
         }
 
         auto interface_key = construct_counter_db_table_key(interface);
