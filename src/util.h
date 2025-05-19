@@ -1,3 +1,7 @@
+
+#ifndef UTIL_H
+#define UTIL_H
+
 #include <string>
 #include <memory>
 #include <jsoncpp/json/json.h>
@@ -10,6 +14,21 @@
 
 extern std::string downstream_if_name;
 
+/** packet direction */
+typedef enum
+{
+    DHCP_RX,    /** RX DHCP packet */
+    DHCP_TX,    /** TX DHCP packet */
+
+    DHCP_DIR_COUNT
+} dhcp_packet_direction_t;
+
+/** string case type */
+typedef enum
+{
+    UPPER_CASE,
+    LOWER_CASE
+} str_case_type;
 
 /**
  * @code  construct_counter_db_table_key(const std::string &ifname);
@@ -36,3 +55,23 @@ bool parse_json_str(const std::string *json_str, Json::Value* out_value);
  * @return bool indicate parsing result
  */
 bool parse_uint64_from_str(const std::string& str, uint64_t& result);
+
+/**
+ * @code  gen_dir_str(const dhcp_packet_direction_t& dir, const str_case_type case_type);
+ * @brief Function to generate dir string
+ * @param dir            direction, DHCP_RX or DHCP_TX
+ * @param case_type      UPPER_CASE or LOWER_CASE
+ * @return string of direction
+ */
+std::string gen_dir_str(const dhcp_packet_direction_t& dir, const str_case_type case_type);
+
+/**
+ * @code void parse_counter_table_key(std::string& vlan, std::string& interface);
+ * @brief Function to parse key in counters_db
+ * @param key            key in counter table
+ * @param vlan           reference of parsed vlan string
+ * @param interface      reference of parsed interface string
+ */
+void parse_counter_table_key(std::string& key, std::string& vlan, std::string& interface);
+
+#endif //UTIL_H

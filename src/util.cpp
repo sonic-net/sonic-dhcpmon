@@ -61,3 +61,45 @@ bool parse_uint64_from_str(const std::string& str, uint64_t& result) {
         return false;
     }
 }
+
+/**
+ * @code  gen_dir_str(const dhcp_packet_direction_t& dir, const str_case_type case_type);
+ * @brief Function to generate dir string
+ * @param dir            direction, DHCP_RX or DHCP_TX
+ * @param case_type      UPPER_CASE or LOWER_CASE
+ * @return string of direction
+ */
+std::string gen_dir_str(const dhcp_packet_direction_t& dir, const str_case_type case_type) {
+    if (dir == DHCP_RX) {
+        if (case_type == UPPER_CASE)
+            return "RX";
+        else
+            return "rx";
+    } else {
+        if (case_type == UPPER_CASE)
+            return "TX";
+        else
+            return "tx";
+    }
+}
+
+/**
+ * @code void parse_counter_table_key(std::string& vlan, std::string& interface);
+ * @brief Function to parse key in counters_db
+ * @param key            key in counter table
+ * @param vlan           reference of parsed vlan string
+ * @param interface      reference of parsed interface string
+ */
+void parse_counter_table_key(std::string& key, std::string& vlan, std::string& interface) {
+    auto first = key.find_first_of(COUNTERS_DB_SEPARATOR);
+    auto last = key.find_last_of(COUNTERS_DB_SEPARATOR);
+    if (first == last) {
+        // Vlan interfaces
+        interface = key.substr(first + 1, key.length() - first);
+        vlan = key.substr(first + 1, key.length() - first);
+    } else {
+        // Physical interfaces
+        interface = key.substr(last + 1, key.length() - last);
+        vlan = key.substr(first + 1, last - first - 1);
+    }
+}

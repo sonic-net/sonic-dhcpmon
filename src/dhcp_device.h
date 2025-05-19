@@ -48,15 +48,6 @@ enum
     OPTION_DHCP_MESSAGE_TYPE = 53,
 };
 
-/** packet direction */
-typedef enum
-{
-    DHCP_RX,    /** RX DHCP packet */
-    DHCP_TX,    /** TX DHCP packet */
-
-    DHCP_DIR_COUNT
-} dhcp_packet_direction_t;
-
 /** counters type */
 typedef enum
 {

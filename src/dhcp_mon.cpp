@@ -53,7 +53,9 @@ static constexpr int clear_counter_timeout = 5;
  *  0b00 - don't write (Need to sync rx and tx cache counter from COUNTERS_DB)
  *  0b01 - don't write (rx cache counter is up to date, but need to sync tx cache counter from COUNTERS_DB)
  *  0b10 - don't write (tx cache counter is up to date, but need to sync rx cache counter from COUNTERS_DB) */
-static int write_counter_to_db = 0b11;
+static constexpr int rx_cache_updated = 0b01;
+static constexpr int tx_cache_updated = 0b10;
+static int write_counter_to_db = rx_cache_updated | tx_cache_updated;
 /** Mutex lock to moidfy write_counter_to_db for different threads */
 static std::mutex write_counter_mutex;
 /** Latest timestamp of writing cache counter to COUNTERS_DB */
@@ -131,7 +133,7 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
     }
     dhcp_packet_direction_t* dir_ptr = reinterpret_cast<dhcp_packet_direction_t*>(arg);
     dhcp_packet_direction_t dir = *dir_ptr;
-    std::string dir_str = (dir == DHCP_RX ? "RX" : "TX");
+    std::string dir_str = gen_dir_str(dir, UPPER_CASE);
 
     syslog(LOG_INFO, "Update %s cache counter\n", dir_str.c_str());
 
@@ -146,17 +148,7 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
     for (auto &itr : keys) {
         std::string interface;
         std::string vlan;
-        auto first = itr.find_first_of(":");
-        auto last = itr.find_last_of(":");
-        if (first == last) {
-            // Vlan interfaces
-            interface = itr.substr(first + 1, itr.length() - first);
-            vlan = itr.substr(first + 1, itr.length() - first);
-        } else {
-            // Physical interfaces
-            interface = itr.substr(last + 1, itr.length() - last);
-            vlan = itr.substr(first + 1, last - first - 1);
-        }
+        parse_counter_table_key(itr, vlan, interface);
 
         if (vlan.compare(downstream_if_name) != 0) {
             syslog(LOG_INFO, "Skip [%s - %s] since it's not related to current downstream interface\n", vlan.c_str(), interface.c_str());
@@ -167,10 +159,7 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
         auto counter_json = mCountersDbPtr->hget(interface_key, dir_str);
         std::replace(counter_json.get()->begin(), counter_json.get()->end(),'\'', '\"');
         Json::Value root;
-        if (!parse_json_str(counter_json.get(), &root)) {
-            syslog(LOG_WARNING, "Failed to parse DB counter for %s, skip sync it from DB counter to cache counter", interface.c_str());
-            continue;
-        }
+        bool parse_result = parse_json_str(counter_json.get(), &root);
 
         auto counter = counter_map->find(interface);
         if (counter == counter_map->end()) {
@@ -179,25 +168,32 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
             initialize_cache_counter(*counter_map, interface);
         }
 
-        for (int i=0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
+        for (int i = 0; i < DHCP_MESSAGE_TYPE_COUNT; i++) {
             const auto& type = db_counter_name[i];
             uint64_t count;
-            // If [corresponding DB counter doesn't exist] or [failed to parse count value], set it to 0.
-            // Else, set it to value parsed.
-            if (!root.isMember(type)) {
-                syslog(LOG_WARNING, "DHCP type %s is not find in %s DB counter for %s, set it to 0\n", type.c_str(),
-                       dir_str.c_str(), interface.c_str());
-                count = 0;
-            } else if (!root[type].isString()) {
-                syslog(LOG_WARNING, "Value type for %s in %s %s DB counter is not string, set it to 0\n", type.c_str(),
-                       interface.c_str(), dir_str.c_str());
+            if (!parse_result) {
+                // If fail to parse from counters_db, set it to be zero
+                syslog(LOG_WARNING, "Failed to parse %s %s count data for %s from COUNTERS_DB, set it to 0\n",
+                       dir_str.c_str(), type.c_str(), interface.c_str());
                 count = 0;
             } else {
-                std::string str_count_val = root[type].asString();
-                if (!parse_uint64_from_str(str_count_val, count)) {
-                    syslog(LOG_WARNING, "Failed to parse %s count value from DB for %s %s, set it to 0\n",
-                           dir_str.c_str(), interface.c_str(), type.c_str());
+                // If [corresponding DB counter doesn't exist] or [failed to parse count value], set it to 0.
+                // Else, set it to value parsed.
+                if (!root.isMember(type)) {
+                    syslog(LOG_WARNING, "DHCP type %s is not find in %s DB counter for %s, set it to 0\n", type.c_str(),
+                           dir_str.c_str(), interface.c_str());
                     count = 0;
+                } else if (!root[type].isString()) {
+                    syslog(LOG_WARNING, "Value type for %s in %s %s DB counter is not string, set it to 0\n", type.c_str(),
+                           interface.c_str(), dir_str.c_str());
+                    count = 0;
+                } else {
+                    std::string str_count_val = root[type].asString();
+                    if (!parse_uint64_from_str(str_count_val, count)) {
+                        syslog(LOG_WARNING, "Failed to parse %s count value from DB for %s %s, set it to 0\n",
+                               dir_str.c_str(), interface.c_str(), type.c_str());
+                        count = 0;
+                    }
                 }
             }
             (*counter_map)[interface][i] = count;
@@ -222,7 +218,7 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
     write_counter_to_db |= (1 << dir_value);
 
     mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_if_name,
-                      std::string(dir == DHCP_RX ? "rx" : "tx") + "_cache_update", "done");
+                      gen_dir_str(dir, LOWER_CASE) + "_cache_update", "done");
     syslog(LOG_ALERT, "Update %s cache counter done", dir_str.c_str());
 }
 
@@ -312,7 +308,7 @@ void update_counter(dhcp_packet_direction_t dir) {
          * Only add downstream prefix for non-downstream interface
          */
         std::string table_name = construct_counter_db_table_key(interface_name);
-        mCountersDbPtr->hset(table_name, (dir == DHCP_RX) ? "RX" : "TX", value);
+        mCountersDbPtr->hset(table_name, gen_dir_str(dir, UPPER_CASE), value);
     }
 }
 

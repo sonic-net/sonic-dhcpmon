@@ -326,7 +326,7 @@ void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direc
     auto &counter_map = (dir == DHCP_RX) ? rx_counter : tx_counter;
     auto counter = counter_map.find(ifname);
     if (counter == counter_map.end()) {
-        syslog(LOG_WARNING, "Cannot find %s counter for %s\n", (dir == DHCP_RX ? "RX" : "TX"), ifname.c_str());
+        syslog(LOG_WARNING, "Cannot find %s counter for %s\n", gen_dir_str(dir, UPPER_CASE).c_str(), ifname.c_str());
         return;
     }
     counter->second[type]++;
