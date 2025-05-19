@@ -186,6 +186,9 @@ void update_vlan_mapping(std::shared_ptr<swss::DBConnector> db_conn) {
         auto first = itr.find_first_of('|');
         auto second = itr.find_last_of('|');
         auto vlan = itr.substr(first + 1, second - first - 1);
+        if (vlan.compare(downstream_if_name) != 0) {
+            continue;
+        }
         auto interface = itr.substr(second + 1);
         vlan_map[interface] = vlan;
         vlans.insert(vlan);
