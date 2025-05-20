@@ -42,6 +42,10 @@ static struct event_mgr *tx_event_mgr = NULL;
 struct event *ev_rx_cache_counter_update = NULL;
 /** event to sync RX cache counter from COUNTERS_DB */
 struct event *ev_tx_cache_counter_update = NULL;
+/** event to write COUNTERS_DB */
+struct event *ev_db_update = NULL;
+/** Indicate whether is diff between counters_db and cache */
+static bool cache_db_diff = false;
 /** window_interval_sec monitoring window for dhcp relay health checks */
 static int db_update_interval_sec;
 /** When clearing counter is invoked, dhcpmon wouldn't write cache counter to COUNTERS_DB until it receives a signal,
@@ -176,6 +180,7 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
                 syslog(LOG_WARNING, "Failed to parse %s %s count data for %s from COUNTERS_DB, set it to 0\n",
                        dir_str.c_str(), type.c_str(), interface.c_str());
                 count = 0;
+                cache_db_diff = true;
             } else {
                 // If [corresponding DB counter doesn't exist] or [failed to parse count value], set it to 0.
                 // Else, set it to value parsed.
@@ -183,21 +188,24 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
                     syslog(LOG_WARNING, "DHCP type %s is not find in %s DB counter for %s, set it to 0\n", type.c_str(),
                            dir_str.c_str(), interface.c_str());
                     count = 0;
+                    cache_db_diff = true;
                 } else if (!root[type].isString()) {
                     syslog(LOG_WARNING, "Value type for %s in %s %s DB counter is not string, set it to 0\n", type.c_str(),
                            interface.c_str(), dir_str.c_str());
                     count = 0;
+                    cache_db_diff = true;
                 } else {
                     std::string str_count_val = root[type].asString();
                     if (!parse_uint64_from_str(str_count_val, count)) {
                         syslog(LOG_WARNING, "Failed to parse %s count value from DB for %s %s, set it to 0\n",
                                dir_str.c_str(), interface.c_str(), type.c_str());
                         count = 0;
+                        cache_db_diff = true;
                     }
                 }
             }
             (*counter_map)[interface][i] = count;
-            syslog(LOG_INFO, "Sync cache counter for %s %s to %lu\n", interface.c_str(), type.c_str(), count);
+            syslog(LOG_INFO, "Sync %s cache counter for %s %s to %lu\n", dir_str.c_str(), interface.c_str(), type.c_str(), count);
         }
         updated_intfs.insert(interface);
     }
@@ -219,7 +227,12 @@ static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
 
     mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_if_name,
                       gen_dir_str(dir, LOWER_CASE) + "_cache_update", "done");
-    syslog(LOG_ALERT, "Update %s cache counter done", dir_str.c_str());
+    syslog(LOG_INFO, "Update %s cache counter done", dir_str.c_str());
+    if (cache_db_diff && write_counter_to_db == (rx_cache_updated | tx_cache_updated)) {
+        syslog(LOG_INFO, "%s COUNTERS_DB and cache counter have diff, write cache counter to COUNTERS_DB immediately\n",
+               dir_str.c_str()); 
+        event_active(ev_db_update, EV_TIMEOUT, 0);
+    }
 }
 
 /**
@@ -478,6 +491,8 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             break;
         }
 
+    
+        cache_db_diff = false;
         dhcp_packet_direction_t temp_dir_rx = DHCP_RX;
         ev_rx_cache_counter_update = event_new(rx_event_mgr->get_base(), -1, 0, update_cache_counter, reinterpret_cast<void*>(&temp_dir_rx));
         dhcp_packet_direction_t temp_dir_tx = DHCP_TX;
@@ -489,7 +504,7 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             break;
         }
 
-        struct event *ev_db_update = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, db_update_callback, main_event_mgr->get_base());
+        ev_db_update = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, db_update_callback, main_event_mgr->get_base());
         if (ev_db_update == NULL) {
             syslog(LOG_ERR, "Could not create db update timer!\n");
             break;
