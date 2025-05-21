@@ -494,8 +494,10 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
     
         cache_db_diff = false;
         dhcp_packet_direction_t temp_dir_rx = DHCP_RX;
+        event_init_check_and_free(ev_rx_cache_counter_update);
         ev_rx_cache_counter_update = event_new(rx_event_mgr->get_base(), -1, 0, update_cache_counter, reinterpret_cast<void*>(&temp_dir_rx));
         dhcp_packet_direction_t temp_dir_tx = DHCP_TX;
+        event_init_check_and_free(ev_tx_cache_counter_update);
         ev_tx_cache_counter_update = event_new(tx_event_mgr->get_base(), -1, 0, update_cache_counter, reinterpret_cast<void*>(&temp_dir_tx));
 
         struct event *ev_timeout = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, timeout_callback, main_event_mgr->get_base());
@@ -504,6 +506,7 @@ int dhcp_mon_start(size_t snaplen, bool debug_mode)
             break;
         }
 
+        event_init_check_and_free(ev_db_update);
         ev_db_update = event_new(main_event_mgr->get_base(), -1, EV_PERSIST, db_update_callback, main_event_mgr->get_base());
         if (ev_db_update == NULL) {
             syslog(LOG_ERR, "Could not create db update timer!\n");

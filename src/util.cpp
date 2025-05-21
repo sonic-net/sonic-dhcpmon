@@ -103,3 +103,18 @@ void parse_counter_table_key(std::string& key, std::string& vlan, std::string& i
         vlan = key.substr(first + 1, last - first - 1);
     }
 }
+
+/**
+ * @code void event_init_check_and_free(struct event *current_event);
+ * @brief Check whether event is NULL and re-init it
+ * @param current_event  point of event
+ */
+void event_init_check_and_free(struct event *current_event) {
+    if (current_event != NULL) {
+        if (event_pending(current_event, EV_READ | EV_WRITE | EV_TIMEOUT, nullptr)) {
+            event_del(current_event);
+        }
+
+        event_free(current_event);
+    }
+}

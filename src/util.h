@@ -7,6 +7,7 @@
 #include <jsoncpp/json/json.h>
 #include <syslog.h>
 #include <unordered_map>
+#include <event2/event.h>
 
 #define COUNTERS_DB_COUNTER_TABLE_PREFIX "DHCPV4_COUNTER_TABLE:"
 #define STATE_DB_COUNTER_UPDATE_PREFIX "DHCPV4_COUNTER_UPDATE|"
@@ -73,5 +74,12 @@ std::string gen_dir_str(const dhcp_packet_direction_t& dir, const str_case_type 
  * @param interface      reference of parsed interface string
  */
 void parse_counter_table_key(std::string& key, std::string& vlan, std::string& interface);
+
+/**
+ * @code void event_init_check_and_free(struct event *current_event);
+ * @brief Check whether event is NULL and re-init it
+ * @param current_event  point of event
+ */
+void event_init_check_and_free(struct event *current_event);
 
 #endif //UTIL_H
