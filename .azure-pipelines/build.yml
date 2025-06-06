@@ -41,7 +41,8 @@ jobs:
           libnl-route-3-dev \
           libnl-genl-3-dev \
           libnl-nf-3-dev \
-          libevent-dev
+          libevent-dev \
+          libjsoncpp-dev
     displayName: "Install dependencies"
   - checkout: self
     clean: true

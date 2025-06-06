@@ -8,6 +8,9 @@
 #ifndef DHCP_MON_H_
 #define DHCP_MON_H_
 
+#include <mutex>
+#include "util.h"
+
 /**
  * @code dhcp_mon_init(window_ssec, max_count, db_update_interval);
  *
