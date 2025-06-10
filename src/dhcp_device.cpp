@@ -616,7 +616,7 @@ static void read_rx_callback(int fd, short event, void *arg)
             }
         } else {
             // non-dualtor
-            if !(context) {
+            if (!context) {
                 context = interface_to_dev_context(devices, intf);
             }
             if (context) {
