@@ -585,14 +585,44 @@ static void read_rx_callback(int fd, short event, void *arg)
         }
         std::string intf(interfaceName);
         context = find_device_context(devices, intf);
-        if (context) {
-            client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
+        // If context interface is not equal to physical interface, for single rx packet, we would
+        // capture it in context interface and physical interface.
+        // 1. For non-dualtor, it's okay to directly invoke `client_packet_handler` to count
+        // 2. For dualtor, rx packets come from (downlink) standby interfaces should be dropped, hence directly
+        //    invoking `client_packet_handler` maybe cause mis-count in context interface for packets come from
+        //    standby interfaces.
+        //    1) For uplink: update context interface counter and physical interface count when capture packets
+        //    2) For downlink:
+        //       - Ignore packet captured in context interface
+        //       - When capture packet in non-standby Physical interface, update context interface and physical
+        //         interface count together
+        if (dual_tor_sock) {
+            if (context && context->is_uplink) {
+                // RX interface is uplink context interface, not need to care the mux status
+                // Update RX uplink context intf count
+                client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
+            } else if (!context) {
+                // RX interface is pc member interface or vlan member interface
+                // Update RX Physical
+                context = interface_to_dev_context(devices, intf);
+                if (context) {
+                    // Update physical interface count
+                    client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
+                    if (!context->is_uplink) {
+                        // Update downlink context interface count
+                        client_packet_handler(downstream_if_name, context, rx_recv_buffer, buffer_sz, DHCP_RX);
+                    }
+                }
+            }
         } else {
-            context = interface_to_dev_context(devices, intf);
+            // non-dualtor
+            if !(context) {
+                context = interface_to_dev_context(devices, intf);
+            }
             if (context) {
                 client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
             }
-        } 
+        }
     }
 }
 
