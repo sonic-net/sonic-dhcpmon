@@ -488,11 +488,11 @@ static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *c
 }
 
 static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::string, struct intf*> *devices,
-                                                       std::string ifname)
+                                                       std::string ifname, bool ignore_standby)
 {
     auto vlan = vlan_map.find(ifname);
     if (vlan != vlan_map.end()) {
-        if (dual_tor_sock) {
+        if (ignore_standby) {
             std::string state;
             mStateDbMuxTablePtr->hget(ifname, "state", state);
             if (state == "standby") {
@@ -549,7 +549,8 @@ static void read_tx_callback(int fd, short event, void *arg)
         if (context) {
             client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
         } else {
-            context = interface_to_dev_context(devices, intf);
+            // For packets sent to downstream in standby intf, we don't need to ignore them
+            context = interface_to_dev_context(devices, intf, false);
             if (context) {
                 client_packet_handler(intf, context, tx_recv_buffer, buffer_sz, DHCP_TX);
             }
@@ -604,7 +605,7 @@ static void read_rx_callback(int fd, short event, void *arg)
             } else if (!context) {
                 // RX interface is pc member interface or vlan member interface
                 // Update RX Physical
-                context = interface_to_dev_context(devices, intf);
+                context = interface_to_dev_context(devices, intf, true);
                 if (context) {
                     // Update physical interface count
                     client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
@@ -617,7 +618,7 @@ static void read_rx_callback(int fd, short event, void *arg)
         } else {
             // non-dualtor
             if (!context) {
-                context = interface_to_dev_context(devices, intf);
+                context = interface_to_dev_context(devices, intf, false);
             }
             if (context) {
                 client_packet_handler(intf, context, rx_recv_buffer, buffer_sz, DHCP_RX);
