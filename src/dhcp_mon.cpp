@@ -49,9 +49,9 @@ static bool cache_db_diff = false;
 /** window_interval_sec monitoring window for dhcp relay health checks */
 static int db_update_interval_sec;
 /** When clearing counter is invoked, dhcpmon wouldn't write cache counter to COUNTERS_DB until it receives a signal,
- *  in case recover signal is not sent by cli, add timeout 5s here. After 5s, dhcpmon would update COUNTERS_DB as previous.
+ *  in case recover signal is not sent by cli, add timeout here. After timeout, dhcpmon would update COUNTERS_DB as previous.
  */
-static constexpr int clear_counter_timeout = 5;
+static int clear_counter_timeout = 5;
 /** Flag to determine whether to write cache counter to COUNTERS_DB.
  *  0b11 - write (rx and tx cache counter are both up to date)
  *  0b00 - don't write (Need to sync rx and tx cache counter from COUNTERS_DB)
@@ -374,6 +374,13 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
         window_interval_sec = window_sec;
         dhcp_unhealthy_max_count = max_count;
         db_update_interval_sec = db_update_interval;
+
+        // Set clear_counter_timeout based on db_update_interval
+        if (db_update_interval < 4) {
+            clear_counter_timeout = 5;
+        } else {
+            clear_counter_timeout = db_update_interval + 1;
+        }
 
         if (main_event_mgr != NULL || rx_event_mgr != NULL || tx_event_mgr != NULL) {
             syslog(LOG_ERR, "Duplicated invoking of dhcp_mon_init, cannot determine whether mgr obj is expected\n");
