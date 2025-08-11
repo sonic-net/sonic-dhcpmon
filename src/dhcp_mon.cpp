@@ -52,6 +52,8 @@ static int db_update_interval_sec;
  *  in case recover signal is not sent by cli, add timeout here. After timeout, dhcpmon would update COUNTERS_DB as previous.
  */
 static int clear_counter_timeout = 5;
+static constexpr int MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC = 5;
+static constexpr int CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC = 1;
 /** Flag to determine whether to write cache counter to COUNTERS_DB.
  *  0b11 - write (rx and tx cache counter are both up to date)
  *  0b00 - don't write (Need to sync rx and tx cache counter from COUNTERS_DB)
@@ -376,11 +378,12 @@ int dhcp_mon_init(int window_sec, int max_count, int db_update_interval)
         db_update_interval_sec = db_update_interval;
 
         // Set clear_counter_timeout based on db_update_interval
-        if (db_update_interval < 4) {
-            clear_counter_timeout = 5;
+        if (db_update_interval < MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC - CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC) {
+            clear_counter_timeout = MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC;
         } else {
-            clear_counter_timeout = db_update_interval + 1;
+            clear_counter_timeout = db_update_interval + CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC ;
         }
+        syslog(LOG_INFO, "clear_counter_timeout is set to %is\n", clear_counter_timeout);
 
         if (main_event_mgr != NULL || rx_event_mgr != NULL || tx_event_mgr != NULL) {
             syslog(LOG_ERR, "Duplicated invoking of dhcp_mon_init, cannot determine whether mgr obj is expected\n");
