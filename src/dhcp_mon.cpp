@@ -133,18 +133,23 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
  * @return none
  */
 static void update_cache_counter(evutil_socket_t fd, short event, void *arg) {
-    if (write_counter_to_db != 0b00) {
-        syslog(LOG_ERR, "Write DB counter from cache counter hasn't stop, cannot sync cache counter from DB counter\n");
-        return;
-    }
     dhcp_packet_direction_t* dir_ptr = reinterpret_cast<dhcp_packet_direction_t*>(arg);
     dhcp_packet_direction_t dir = *dir_ptr;
     std::string dir_str = gen_dir_str(dir, UPPER_CASE);
 
+    std::lock_guard<std::mutex> lock(write_counter_mutex);
+    if (
+        (write_counter_to_db == rx_cache_updated && dir == DHCP_RX) ||
+        (write_counter_to_db == tx_cache_updated && dir == DHCP_TX) ||
+        (write_counter_to_db == (rx_cache_updated | tx_cache_updated))
+    ) {
+        syslog(LOG_ERR, "Write DB %s counter from cache counter hasn't stop, cannot sync cache counter from DB counter\n", dir_str.c_str());
+        return;
+    }
+
     syslog(LOG_INFO, "Update %s cache counter\n", dir_str.c_str());
 
     auto match_pattern = COUNTERS_DB_COUNTER_TABLE_PREFIX + downstream_if_name + "*";
-    std::lock_guard<std::mutex> lock(write_counter_mutex);
     auto keys = mCountersDbPtr->keys(match_pattern);
 
     // Store interfaces in DB counter table
