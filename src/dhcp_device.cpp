@@ -423,7 +423,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
     uint8_t type = dhcp_option[2];
     if (type >= DHCP_MESSAGE_TYPE_COUNT) {
         syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
-        type = 0; // treate it as unknown counter
+        type = 0; // treat it as unknown counter
     }
     if (context_if.compare(sock_if) != 0) {
         // count for incomming physical interfaces
