@@ -319,6 +319,10 @@ void initialize_db_counters(std::string &ifname)
  */
 void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
 {
+    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
+        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
+        type = 0; // treat it as unknown counter
+    }
     auto &counter_map = (dir == DHCP_RX) ? rx_counter : tx_counter;
     auto counter = counter_map.find(ifname);
     if (counter == counter_map.end()) {
