@@ -319,10 +319,6 @@ void initialize_db_counters(std::string &ifname)
  */
 void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
 {
-    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
-        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
-        type = 0; // treate it as unknown counter
-    }
     auto &counter_map = (dir == DHCP_RX) ? rx_counter : tx_counter;
     auto counter = counter_map.find(ifname);
     if (counter == counter_map.end()) {
@@ -420,14 +416,19 @@ static void handle_dhcp_option_53(std::string &sock_if,
         return;
     }
 
+    uint8_t type = dhcp_option[2];
+    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
+        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
+        type = 0; // treate it as unknown counter
+    }
     if (context_if.compare(sock_if) != 0) {
         // count for incomming physical interfaces
-        increase_cache_counter(sock_if, dhcp_option[2], dir);
+        increase_cache_counter(sock_if, type, dir);
     } else {
         // count for device context interfaces (-d -u -m)
-        increase_cache_counter(context_if, dhcp_option[2], dir);
-        context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-        aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+        increase_cache_counter(context_if, type, dir);
+        context->counters[DHCP_COUNTERS_CURRENT][dir][type]++;
+        aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][type]++;
     }
 }
 
