@@ -210,12 +210,12 @@ void dhcp_device_update_snapshot(dhcp_device_context_t *context);
 void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type);
 
 /**
- * @code                void initialize_db_counter(std::string &ifname)
+ * @code                void initialize_db_counter(const std::string &ifname)
  * @brief               Initialize the counter in counters_db with interface name
  * @param ifname        interface name
  * @return              none
  */
-void initialize_db_counters(std::string &ifname);
+void initialize_db_counters(const std::string &ifname);
 
 /**
  * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
