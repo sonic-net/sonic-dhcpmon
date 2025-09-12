@@ -293,12 +293,12 @@ std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* co
 }
 
 /**
- * @code                void initialize_db_counters(std::string &ifname)
+ * @code                void initialize_db_counters(const std::string &ifname)
  * @brief               Initialize the counter in counters_db with interface name
  * @param ifname        interface name
  * @return              none
  */
-void initialize_db_counters(std::string &ifname)
+void initialize_db_counters(const std::string &ifname)
 {
     /**
      * Only add downstream prefix for non-downstream interface
