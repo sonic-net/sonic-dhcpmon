@@ -1019,6 +1019,12 @@ int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, st
         update_mgmt_mapping();
 
         for (auto &itr : intfs) {
+            // For upstream interfaces are not in portchannel
+            if (rx_counter.find(itr.first) == rx_counter.end() || tx_counter.find(itr.first) == tx_counter.end()) {
+                initialize_db_counters(itr.first);
+                initialize_cache_counter(rx_counter, itr.first);
+                initialize_cache_counter(tx_counter, itr.first);
+            }
             itr.second->dev_context->snaplen = snaplen;
             itr.second->dev_context->giaddr_ip = giaddr_ip;
             // all interface dev context has same rx/tx socket
