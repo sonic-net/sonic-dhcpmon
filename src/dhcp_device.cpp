@@ -80,7 +80,7 @@ std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counte
 
 /* db counter name array, message type rage [1, 9] */
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
-    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Drop"
+    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Malformed"
 };
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
@@ -358,7 +358,6 @@ static void increase_cache_counter_per_interface(std::string &sock_if, dhcp_devi
     }
 
     std::string context_if(context->intf);
-
     if (context_if.compare(sock_if) != 0)
     {
         // count for incomming physical interfaces
@@ -440,7 +439,7 @@ static void handle_dhcp_option_53(std::string &sock_if,
         }
         break;
 
-    case DROP_PACKET:
+    case MALFORMED:
         // The packet need to be dropped, e.g., checksum error
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Drop packet found, option 53 type %d", context->intf, dhcp_option[2]);
         
@@ -524,7 +523,6 @@ uint16_t calculate_udp_checksum(struct ip *iphdr, const uint8_t *udp_pkt, size_t
 
     sum += IPPROTO_UDP;
     sum += (uint16_t)udp_len; 
-
     // UDP header + payload
     sum += checksum_accumulate_words(udp_pkt, udp_len);
     uint16_t final_sum = checksum_finalize_fold(sum);
@@ -542,9 +540,7 @@ uint16_t calculate_udp_checksum(struct ip *iphdr, const uint8_t *udp_pkt, size_t
  * @return         True if the checksum is valid, false otherwise.
  */
 bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_t *udp_pkt, std::string &sock_if, dhcp_packet_direction_t dir, dhcp_device_context_t *context){
-
     bool res = true;
-
     // validate IP header checksum
     uint16_t ip_sum = iphdr->ip_sum;
     iphdr->ip_sum = 0;
@@ -554,7 +550,6 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
         syslog(LOG_WARNING, "IP checksum error, checksum in IP header: %d, calculated: %d", ntohs(iphdr->ip_sum), ip_checksum);
         res = false;
     }
-
     // validate UDP checksum
     uint16_t udp_len = ntohs(udp->len);
     uint16_t uh_sum = udp->uh_sum;
@@ -565,7 +560,6 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
         syslog(LOG_WARNING, "UDP checksum error, checksum in UDP: %d, calculated: %d", ntohs(uh_sum), udp_checksum);
         res = false;
     }
-
     if (!res) {
         increase_cache_counter_per_interface(sock_if, context, MALFORMED, dir);
     }
@@ -597,7 +591,9 @@ static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *c
     if (((unsigned)buffer_sz > UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) &&
         (ntohs(udp->len) > DHCP_OPTIONS_HEADER_SIZE))
     {
-        if (!validate_IP_UDP_checksum(iphdr, udp, buffer + UDP_START_OFFSET, sock_if, dir, context)) {
+        if (dir == DHCP_RX && !validate_IP_UDP_checksum(iphdr, udp, buffer + UDP_START_OFFSET, sock_if, dir, context)) {
+            syslog(LOG_WARNING, "Checksum validation failed: interface: %s, src ip: %s, dst ip: %s",
+                   sock_if.c_str(), inet_ntoa(iphdr->ip_src), inet_ntoa(iphdr->ip_dst));
             return;
         }
         int dhcp_sz = ntohs(udp->len) < buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr) ?
