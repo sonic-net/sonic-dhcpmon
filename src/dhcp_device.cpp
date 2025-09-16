@@ -438,14 +438,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
             packet_valid_type = DHCP_VALID;
         }
         break;
-
-    case MALFORMED:
-        // The packet need to be dropped, e.g., checksum error
-        syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Drop packet found, option 53 type %d", context->intf, dhcp_option[2]);
-        
-        // The packet type need to set as unknown as we still want to count it.
-        packet_valid_type = DHCP_UNKNOWN;
-        break;
     default:
         syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
         packet_valid_type = DHCP_UNKNOWN;
@@ -540,7 +532,6 @@ uint16_t calculate_udp_checksum(struct ip *iphdr, const uint8_t *udp_pkt, size_t
  * @return         True if the checksum is valid, false otherwise.
  */
 bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_t *udp_pkt, std::string &sock_if, dhcp_packet_direction_t dir, dhcp_device_context_t *context){
-    bool res = true;
     // validate IP header checksum
     uint16_t ip_sum = iphdr->ip_sum;
     iphdr->ip_sum = 0;
@@ -548,7 +539,8 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
     iphdr->ip_sum = ip_sum;
     if (ntohs(ip_sum) != ip_checksum) {
         syslog(LOG_WARNING, "IP checksum error, checksum in IP header: %d, calculated: %d", ntohs(iphdr->ip_sum), ip_checksum);
-        res = false;
+        increase_cache_counter_per_interface(sock_if, context, MALFORMED, dir);
+        return false;
     }
     // validate UDP checksum
     uint16_t udp_len = ntohs(udp->len);
@@ -558,12 +550,10 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
     udp->uh_sum = uh_sum;
     if (ntohs(uh_sum) != udp_checksum) {
         syslog(LOG_WARNING, "UDP checksum error, checksum in UDP: %d, calculated: %d", ntohs(uh_sum), udp_checksum);
-        res = false;
-    }
-    if (!res) {
         increase_cache_counter_per_interface(sock_if, context, MALFORMED, dir);
+        return false;
     }
-    return res;
+    return true;
 }
 
 /**
