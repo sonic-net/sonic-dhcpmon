@@ -46,6 +46,9 @@
 #define MAGIC_COOKIE_OFFSET 236
 /** 32-bit decimal of 99.130.83.99 (indicate DHCP packets), Refer to RFC 2131 */
 #define DHCP_MAGIC_COOKIE 1669485411
+/** Maximum dhcp packet buffer size */
+#define MAX_PACKET_BUFFER_SIZE 9200
+
 
 #define OP_LDHA     (BPF_LD  | BPF_H   | BPF_ABS)   /** bpf ldh Abs */
 #define OP_LDHI     (BPF_LD  | BPF_H   | BPF_IND)   /** bpf ldh Ind */
@@ -584,6 +587,10 @@ static void read_rx_callback(int fd, short event, void *arg)
 
     while ((buffer_sz = recvfrom(fd, rx_recv_buffer, snap_length, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) 
     {
+        if (buffer_sz >= MAX_PACKET_BUFFER_SIZE) {
+            syslog(LOG_WARNING, "Rx packet size %zd exceeds max buffer size %d, ignore it\n", buffer_sz, MAX_PACKET_BUFFER_SIZE);
+            continue;
+        }
         char interfaceName[IF_NAMESIZE];
         if (if_indextoname(sll.sll_ifindex, interfaceName) == NULL) {
             syslog(LOG_WARNING, "invalid input interface index %d\n", sll.sll_ifindex);
