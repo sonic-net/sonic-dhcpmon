@@ -39,6 +39,7 @@ typedef enum
     DHCP_MESSAGE_TYPE_RELEASE  = 7,
     DHCP_MESSAGE_TYPE_INFORM   = 8,
     BOOTP_MESSAGE              = 9,
+    MALFORMED                  = 10,
 
     DHCP_MESSAGE_TYPE_COUNT
 } dhcp_message_type_t;

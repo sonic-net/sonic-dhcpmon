@@ -80,7 +80,7 @@ std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> tx_counte
 
 /* db counter name array, message type rage [1, 9] */
 std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
-    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp"
+    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Malformed"
 };
 
 /** Berkeley Packet Filter program for "udp and (port 67 or port 68)".
@@ -344,6 +344,35 @@ dhcp_device_context_t *find_device_context(std::unordered_map<std::string, struc
 static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msgs);
 
 /**
+ * Increase cache counter for a specific interface
+ * @param sock_if       Physical interface name where the packet is captured
+ * @param context       Device (interface) context
+ * @param type          Packet type
+ * @param dir           Packet direction
+ */
+static void increase_cache_counter_per_interface(std::string &sock_if, dhcp_device_context_t *context, uint8_t type, dhcp_packet_direction_t dir)
+{
+    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
+        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
+        type = 0; // treat it as unknown counter
+    }
+
+    std::string context_if(context->intf);
+    if (context_if.compare(sock_if) != 0)
+    {
+        // count for incomming physical interfaces
+        increase_cache_counter(sock_if, type, dir);
+    }
+    else
+    {
+        // count for device context interfaces (-d -u -m)
+        increase_cache_counter(context_if, type, dir);
+        context->counters[DHCP_COUNTERS_CURRENT][dir][type]++;
+        aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][type]++;
+    }
+}
+
+/**
  * @code handle_dhcp_option_53(context, dhcp_option, dir, iphdr, dhcphdr);
  *
  * @brief handle the logic related to DHCP option 53
@@ -365,7 +394,6 @@ static void handle_dhcp_option_53(std::string &sock_if,
                                   uint8_t *dhcphdr)
 {
     in_addr_t giaddr;
-    std::string context_if(context->intf);
     dhcp_mon_packet_valid_type_t packet_valid_type = DHCP_INVALID;
 
     switch (dhcp_option[2])
@@ -420,20 +448,128 @@ static void handle_dhcp_option_53(std::string &sock_if,
         return;
     }
 
-    uint8_t type = dhcp_option[2];
-    if (type >= DHCP_MESSAGE_TYPE_COUNT) {
-        syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
-        type = 0; // treat it as unknown counter
+    increase_cache_counter_per_interface(sock_if, context, dhcp_option[2], dir);
+}
+
+/**
+ * Compute the accumulate checksum for a given data buffer without final fold.
+ * @param data     Pointer to the data buffer.
+ * @param length  Length of the data buffer.
+ * @return       The computed partial checksum.
+ */
+uint32_t checksum_accumulate_words(const uint8_t *data, size_t length) {
+    uint32_t sum = 0;
+    size_t i = 0;
+
+    while (i + 8 <= length) {
+        sum += (uint16_t)((data[i] << 8) | data[i + 1]);
+        sum += (uint16_t)((data[i + 2] << 8) | data[i + 3]);
+        sum += (uint16_t)((data[i + 4] << 8) | data[i + 5]);
+        sum += (uint16_t)((data[i + 6] << 8) | data[i + 7]);
+        i += 8;
     }
-    if (context_if.compare(sock_if) != 0) {
-        // count for incomming physical interfaces
-        increase_cache_counter(sock_if, type, dir);
-    } else {
-        // count for device context interfaces (-d -u -m)
-        increase_cache_counter(context_if, type, dir);
-        context->counters[DHCP_COUNTERS_CURRENT][dir][type]++;
-        aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][type]++;
+
+    if (i + 4 <= length) {
+        sum += (uint16_t)((data[i] << 8) | data[i + 1]);
+        sum += (uint16_t)((data[i + 2] << 8) | data[i + 3]);
+        i += 4;
     }
+
+    if (i + 2 <= length) {
+        sum += (uint16_t)((data[i] << 8) | data[i + 1]);
+        i += 2;
+    }
+
+    if (i < length) {
+        sum += (uint16_t)(data[i] << 8);
+    }
+    return sum;
+
+}
+
+/**
+ * Finalize the checksum by folding 32-bit sum to 16-bit.
+ */
+uint16_t checksum_finalize_fold(uint32_t sum) {
+    while (sum >> 16) {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    return (uint16_t)(~sum);
+}
+
+/**
+ * Compute the IP checksum for a given IP header.
+ */
+uint16_t calculate_ip_checksum(struct ip *iphdr) {
+    if (!iphdr || iphdr->ip_hl < 5) {
+        return 0;  // Invalid IP header or header length too short
+    }
+    return checksum_finalize_fold(checksum_accumulate_words((const uint8_t *)iphdr, iphdr->ip_hl * 4));
+}
+
+/**
+ * Compute the UDP checksum for a given IP header and UDP packet(including header and payload).
+ * @param iphdr     Pointer to the IP header.
+ * @param udp_pkt   Pointer to the UDP packet (including header and payload).
+ * @param udp_len   Length of the UDP packet.
+ * @return          The computed UDP checksum.
+ */
+uint16_t calculate_udp_checksum(struct ip *iphdr, const uint8_t *udp_pkt, size_t udp_len) {
+    if (!iphdr || !udp_pkt || udp_len < sizeof(struct udphdr)) {
+        return 0;  // Invalid arguments or UDP length too short
+    }
+
+    uint32_t sum = 0;
+    // Pseudo header
+    uint32_t s = ntohl(iphdr->ip_src.s_addr);
+    sum += (s >> 16) & 0xFFFF;
+    sum +=  s        & 0xFFFF;
+
+    uint32_t d = ntohl(iphdr->ip_dst.s_addr);
+    sum += (d >> 16) & 0xFFFF;
+    sum +=  d        & 0xFFFF;
+
+    sum += IPPROTO_UDP;
+    sum += (uint16_t)udp_len; 
+    // UDP header + payload
+    sum += checksum_accumulate_words(udp_pkt, udp_len);
+    uint16_t final_sum = checksum_finalize_fold(sum);
+    return final_sum == 0? 0xFFFF : final_sum;
+}
+
+/**
+ * Validate the checksum for IP headers and UDP packet. if the checksum is invalid, log warning and increase the drop packet counter.
+ * @param iphdr    Pointer to the IP header.
+ * @param udp      Pointer to the UDP header.
+ * @param udp_pkt  Pointer to the UDP packet (including header and payload).
+ * @param sock_if  Socket interface.
+ * @param dir      DHCP packet direction.
+ * @param context  Pointer to device (interface) context.
+ * @return         True if the checksum is valid, false otherwise.
+ */
+bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_t *udp_pkt, std::string &sock_if, dhcp_packet_direction_t dir, dhcp_device_context_t *context){
+    // validate IP header checksum
+    uint16_t ip_sum = iphdr->ip_sum;
+    iphdr->ip_sum = 0;
+    uint16_t ip_checksum = calculate_ip_checksum(iphdr);
+    iphdr->ip_sum = ip_sum;
+    if (ntohs(ip_sum) != ip_checksum) {
+        syslog(LOG_WARNING, "IP checksum error, checksum in IP header: %d, calculated: %d", ntohs(iphdr->ip_sum), ip_checksum);
+        increase_cache_counter_per_interface(sock_if, context, MALFORMED, dir);
+        return false;
+    }
+    // validate UDP checksum
+    uint16_t udp_len = ntohs(udp->len);
+    uint16_t uh_sum = udp->uh_sum;
+    udp->uh_sum = 0;
+    uint16_t udp_checksum = calculate_udp_checksum(iphdr, udp_pkt, udp_len);
+    udp->uh_sum = uh_sum;
+    if (ntohs(uh_sum) != udp_checksum) {
+        syslog(LOG_WARNING, "UDP checksum error, checksum in UDP: %d, calculated: %d", ntohs(uh_sum), udp_checksum);
+        increase_cache_counter_per_interface(sock_if, context, MALFORMED, dir);
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -461,6 +597,11 @@ static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *c
     if (((unsigned)buffer_sz > UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) &&
         (ntohs(udp->len) > DHCP_OPTIONS_HEADER_SIZE))
     {
+        if (dir == DHCP_RX && !validate_IP_UDP_checksum(iphdr, udp, buffer + UDP_START_OFFSET, sock_if, dir, context)) {
+            syslog(LOG_WARNING, "Checksum validation failed: interface: %s, src ip: %s, dst ip: %s",
+                   sock_if.c_str(), inet_ntoa(iphdr->ip_src), inet_ntoa(iphdr->ip_dst));
+            return;
+        }
         int dhcp_sz = ntohs(udp->len) < buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr) ?
                     ntohs(udp->len) : buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr);
         int dhcp_option_sz = dhcp_sz - DHCP_OPTIONS_HEADER_SIZE;
