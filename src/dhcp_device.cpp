@@ -350,7 +350,7 @@ static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msg
  * @param type          Packet type
  * @param dir           Packet direction
  */
-static void increase_cache_counter_per_interface(std::string &sock_if, dhcp_device_context_t *context, const uint8_t type, dhcp_packet_direction_t dir)
+static void increase_cache_counter_per_interface(std::string &sock_if, dhcp_device_context_t *context, uint8_t type, dhcp_packet_direction_t dir)
 {
     if (type >= DHCP_MESSAGE_TYPE_COUNT) {
         syslog(LOG_WARNING, "Unexpected message type %d(0x%x)\n", type, type);
