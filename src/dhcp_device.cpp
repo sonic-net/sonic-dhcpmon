@@ -460,10 +460,26 @@ static void handle_dhcp_option_53(std::string &sock_if,
 uint32_t checksum_accumulate_words(const uint8_t *data, size_t length) {
     uint32_t sum = 0;
     size_t i = 0;
-    while (i + 1 < length) {
+
+    while (i + 8 <= length) {
+        sum += (uint16_t)((data[i] << 8) | data[i + 1]);
+        sum += (uint16_t)((data[i + 2] << 8) | data[i + 3]);
+        sum += (uint16_t)((data[i + 4] << 8) | data[i + 5]);
+        sum += (uint16_t)((data[i + 6] << 8) | data[i + 7]);
+        i += 8;
+    }
+
+    if (i + 4 <= length) {
+        sum += (uint16_t)((data[i] << 8) | data[i + 1]);
+        sum += (uint16_t)((data[i + 2] << 8) | data[i + 3]);
+        i += 4;
+    }
+
+    if (i + 2 <= length) {
         sum += (uint16_t)((data[i] << 8) | data[i + 1]);
         i += 2;
     }
+
     if (i < length) {
         sum += (uint16_t)(data[i] << 8);
     }
