@@ -591,11 +591,6 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
 static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
                                   ssize_t buffer_sz, dhcp_packet_direction_t dir)
 {
-    if (dir == DHCP_RX && !context->is_uplink && static_cast<size_t>(buffer_sz) > DHCP_START_OFFSET + DHCP_MTU_MIN) {
-        syslog(LOG_WARNING, "rx packet size %zd exceeds max dhcp packet size %ld, interface: %s", buffer_sz, DHCP_START_OFFSET + DHCP_MTU_MIN, sock_if.c_str());
-        increase_cache_counter_per_interface(sock_if, context, MALFORMED, DHCP_RX);
-        return;
-    }
     struct ip *iphdr = (struct ip*) (buffer + IP_START_OFFSET);
     struct udphdr *udp = (struct udphdr*) (buffer + UDP_START_OFFSET);
     uint8_t *dhcphdr = buffer + DHCP_START_OFFSET;
@@ -604,10 +599,18 @@ static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *c
     if (((unsigned)buffer_sz > UDP_START_OFFSET + sizeof(struct udphdr) + DHCP_OPTIONS_HEADER_SIZE) &&
         (ntohs(udp->len) > DHCP_OPTIONS_HEADER_SIZE))
     {
-        if (dir == DHCP_RX && !validate_IP_UDP_checksum(iphdr, udp, buffer + UDP_START_OFFSET, sock_if, dir, context)) {
-            syslog(LOG_WARNING, "Checksum validation failed: interface: %s, src ip: %s, dst ip: %s",
-                   sock_if.c_str(), inet_ntoa(iphdr->ip_src), inet_ntoa(iphdr->ip_dst));
-            return;
+        if (dir == DHCP_RX)
+        {
+            if (!context->is_uplink && static_cast<size_t>(buffer_sz) > DHCP_START_OFFSET + DHCP_MTU_MIN) {
+                syslog(LOG_WARNING, "rx packet size %zd exceeds max dhcp packet size %ld, interface: %s", buffer_sz, DHCP_START_OFFSET + DHCP_MTU_MIN, sock_if.c_str());
+                increase_cache_counter_per_interface(sock_if, context, MALFORMED, DHCP_RX);
+                return;
+            }
+            else if (!validate_IP_UDP_checksum(iphdr, udp, buffer + UDP_START_OFFSET, sock_if, dir, context)) {
+                syslog(LOG_WARNING, "Checksum validation failed: interface: %s, src ip: %s, dst ip: %s",
+                    sock_if.c_str(), inet_ntoa(iphdr->ip_src), inet_ntoa(iphdr->ip_dst));
+                return;
+            }
         }
         int dhcp_sz = ntohs(udp->len) < buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr) ?
                     ntohs(udp->len) : buffer_sz - UDP_START_OFFSET - sizeof(struct udphdr);
