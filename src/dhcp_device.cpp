@@ -46,6 +46,8 @@
 #define MAGIC_COOKIE_OFFSET 236
 /** 32-bit decimal of 99.130.83.99 (indicate DHCP packets), Refer to RFC 2131 */
 #define DHCP_MAGIC_COOKIE 1669485411
+/** The minimum value of DHCP MTU */
+#define DHCP_MTU_MIN 576
 
 #define OP_LDHA     (BPF_LD  | BPF_H   | BPF_ABS)   /** bpf ldh Abs */
 #define OP_LDHI     (BPF_LD  | BPF_H   | BPF_IND)   /** bpf ldh Ind */
@@ -589,6 +591,11 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
 static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
                                   ssize_t buffer_sz, dhcp_packet_direction_t dir)
 {
+    if (static_cast<size_t>(buffer_sz) > DHCP_START_OFFSET + DHCP_MTU_MIN) {
+        syslog(LOG_WARNING, "rx packet size %zd exceeds max dhcp packet size %ld, interface: %s", buffer_sz, DHCP_START_OFFSET + DHCP_MTU_MIN, sock_if.c_str());
+        increase_cache_counter_per_interface(sock_if, context, MALFORMED, DHCP_RX);
+        return;
+    }
     struct ip *iphdr = (struct ip*) (buffer + IP_START_OFFSET);
     struct udphdr *udp = (struct udphdr*) (buffer + UDP_START_OFFSET);
     uint8_t *dhcphdr = buffer + DHCP_START_OFFSET;
