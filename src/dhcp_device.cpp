@@ -591,7 +591,7 @@ bool validate_IP_UDP_checksum(struct ip *iphdr, struct udphdr *udp, const uint8_
 static void client_packet_handler(std::string &sock_if, dhcp_device_context_t *context, uint8_t *buffer,
                                   ssize_t buffer_sz, dhcp_packet_direction_t dir)
 {
-    if (static_cast<size_t>(buffer_sz) > DHCP_START_OFFSET + DHCP_MTU_MIN) {
+    if (dir == DHCP_RX && !context->is_uplink && static_cast<size_t>(buffer_sz) > DHCP_START_OFFSET + DHCP_MTU_MIN) {
         syslog(LOG_WARNING, "rx packet size %zd exceeds max dhcp packet size %ld, interface: %s", buffer_sz, DHCP_START_OFFSET + DHCP_MTU_MIN, sock_if.c_str());
         increase_cache_counter_per_interface(sock_if, context, MALFORMED, DHCP_RX);
         return;
