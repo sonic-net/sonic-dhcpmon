@@ -42,7 +42,8 @@ jobs:
           libnl-genl-3-dev \
           libnl-nf-3-dev \
           libevent-dev \
-          libjsoncpp-dev
+          libjsoncpp-dev \
+          libpcap-dev
     displayName: "Install dependencies"
   - checkout: self
     clean: true

@@ -1,7 +1,15 @@
 /**
  * @file dhcp_devman.h
  *
- *  Device (interface) manager
+ * Device (interface) manager
+ * 
+ * Collection of functions to manage all the interfaces information and their roles, their relations to each other, and operations on
+ * all interfaces. Functions are noop on failure.
+ * 
+ * dhcp_devman_add_intf and dhcp_devman_setup_dual_tor_mode will be called during command line arg processing, before dhcp_devman_init
+ * dhcp_devman_init will initialize all interfaces added, and dhcp_devman_free will clean up all allocated resources
+ * dhcp_devman_init and dhcp_devman_free will be called by dhcp_mon
+ * dhcp_devman_get_status, dhcp_devman_print_status are interface to dhcp_device functions
  */
 
 #ifndef DHCP_DEVMAN_H_
@@ -10,57 +18,52 @@
 #include <stdint.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "dhcp_device.h"
 
-/** struct for interface information */
-struct intf
-{
-    const char *name;                   /** interface name */
-    uint8_t is_uplink;                  /** is uplink (north) interface */
-    dhcp_device_context_t *dev_context; /** device (interface_ context */
-};
+/** if we are in dual tor mode */
+extern bool dual_tor_mode;
+
+/** ip information for downstream vlan interface */
+extern in_addr vlan_ip;
+extern in6_addr vlan_ipv6_gua;
+extern in6_addr vlan_ipv6_lla;
+
+/** loopback interface ip, which will be used as the giaddr in dual tor setup. */
+extern in_addr loopback_ip;
+extern in6_addr loopback_ipv6_gua;
+extern in6_addr loopback_ipv6_lla;
+
+/** gateway ip in dhcp, used to filter packets that pertain to our downstream vlan interface */
+extern in_addr giaddr_ip;
+extern in6_addr giaddr_ipv6;
+extern in6_addr zero_ipv6;
+
+/** downstream interface name */
+extern std::string downstream_ifname;
+
+/** mgmt interface name */
+extern std::string mgmt_ifname;
+
+/** aggregate interface of all except mgmt to track overall packet flow for host */
+extern std::string agg_dev_all;
+extern std::string agg_dev_prefix;
+
+/* interface to vlan mapping */
+extern std::unordered_map<std::string, std::string> vlan_map;
+
+/* interface to port-channel mapping */
+extern std::unordered_map<std::string, std::string> portchan_map;
+
+/* vlan to interface mapping */
+extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
+
+/* port-channel to interface mapping */
+extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
 /**
- * @code dhcp_devman_init();
- *
- * @brief initializes device (interface) manager that keeps track of interfaces and assert that there is one south
- *        interface and as many north interfaces
- *
- * @return none
- */
-void dhcp_devman_init();
-
-/**
- * @code dhcp_devman_shutdown();
- *
- * @brief shuts down device (interface) manager. Also, stops packet capture on interface and cleans up any allocated
- *        memory
- *
- * @return none
- */
-void dhcp_devman_shutdown();
-
-/**
- * @code dhcp_devman_get_vlan_intf();
- *
- * @brief Accessor method
- *
- * @return pointer to aggregate device (interface) context
- */
-dhcp_device_context_t* dhcp_devman_get_agg_dev();
-
-/**
- * @code dhcp_devman_get_mgmt_intf_context();
- *
- * @brief Accessor method
- *
- * @return pointer to mgmt interface context
- */
-dhcp_device_context_t* dhcp_devman_get_mgmt_dev();
-
-/**
- * @code dhcp_devman_add_intf(name, uplink);
+ * @code dhcp_devman_add_intf(name, intf_type);
  *
  * @brief adds interface to the device manager.
  *
@@ -69,7 +72,7 @@ dhcp_device_context_t* dhcp_devman_get_mgmt_dev();
  *                          'd' for downlink (south) interface
  *                          'm' for mgmt interface
  *
- * @return 0 on success, nonzero otherwise
+ * @return 0 on success, negative otherwise
  */
 int dhcp_devman_add_intf(const char *name, char intf_type);
 
@@ -80,54 +83,61 @@ int dhcp_devman_add_intf(const char *name, char intf_type);
  *
  * @param name              interface name
  *
- * @return 0 on success, nonzero otherwise
+ * @return 0 on success, negative otherwise
  */
 int dhcp_devman_setup_dual_tor_mode(const char *name);
 
 /**
- * @code dhcp_devman_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr);
+ * @code dhcp_devman_init(snaplen);
  *
- * @brief start packet capture on the devman interface list
+ * @brief initializes device (interface) manager that keeps track of interfaces and assert that there is one south
+ *        interface and as many north interfaces
  *
- * @param snaplen          packet capture snap length
- * @param rx_event_mgr     event mgr for rx packet
- * @param tx_event_mgr     event mgr for tx packet
- *
- * @return 0 on success, nonzero otherwise
+ * @return 0 on success, negative otherwise
  */
-int dhcp_devman_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr);
+int dhcp_devman_init(size_t snaplen);
 
 /**
- * @code dhcp_devman_get_status(check_type, context);
+ * @code dhcp_devman_free();
  *
- * @brief collects DHCP relay status info.
- *
- * @param check_type        Type of validation
- * @param context           pointer to device (interface) context
- *
- * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
- */
-dhcp_mon_status_t dhcp_devman_get_status(dhcp_mon_check_t check_type, dhcp_device_context_t *context);
-
-/**
- * @code dhcp_devman_update_snapshot(context);
- *
- * @param context           Device (interface) context
- *
- * @brief Update device/interface counters snapshot
- */
-void dhcp_devman_update_snapshot(dhcp_device_context_t *context);
-
-/**
- * @code dhcp_devman_print_status(context, type);
- *
- * @brief prints status counters to syslog
- *
- * @param context       pointer to device (interface) context
- * @param type          Counter type to be printed
+ * @brief  frees resources used by device (interface) manager and undo init. Not only undo dhcp_devman_init but also all the add 
+ *         interfaces memory
  *
  * @return none
  */
-void dhcp_devman_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type);
+void dhcp_devman_free();
+
+/**
+ * @code dhcp_devman_get_device_context(ifname);
+ *
+ * @brief find device context, if its physical interface, will query vlan_map and portchannel_map first
+ *
+ * @param ifname           interface name
+ *
+ * @return pointer to device (interface) context if found, NULL otherwise
+ */
+const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &ifname);
+
+/**
+ * @code dhcp_devman_print_all_status(type);
+ *
+ * @brief prints status counters for all interfaces to syslog.
+ *
+ * @param type              counter type
+ *
+ * @return none
+ */
+void dhcp_devman_print_all_status(dhcp_counters_type_t type);
+
+/**
+ * @code dhcp_devman_print_all_status_debug(type);
+ *
+ * @brief same as dhcp_devman_print_all_status but only print when debug_on is true
+ *
+ * @param type              counter type
+ *
+ * @return none
+ */
+void dhcp_devman_print_all_status_debug(dhcp_counters_type_t type);
 
 #endif /* DHCP_DEVMAN_H_ */
