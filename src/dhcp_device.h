@@ -1,7 +1,13 @@
 /**
  * @file dhcp_device.h
  *
- *  device (interface) module
+ * device (interface) module
+ * 
+ * Collection of functions to manage context interface information, it's creation, deletion, and various checks on an interface.
+ * Context interface is the interface input directly from command line. However operations on specific context interface has been
+ * extended to physical interfaces under the context interface, as well as aggregate interfaces. Thus we don't use context interface
+ * directly in many places, instead we use interface name string to identify an interface. In case we need context interface info, we
+ * will query device manager to get the context interface from interface name.
  */
 
 #ifndef DHCP_DEVICE_H_
@@ -11,52 +17,53 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <net/ethernet.h>
-
-#include <event2/listener.h>
-#include <event2/bufferevent.h>
-#include <event2/buffer.h>
-#include <event2/thread.h>
-
-#include "subscriberstatetable.h"
-#include "util.h"
-
-extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
-extern std::shared_ptr<swss::DBConnector> mStateDbPtr;
-extern bool dual_tor_sock;
-extern std::unordered_map<std::string, struct intf*> intfs;
+#include <string>
 
 /**
  * DHCP message types
  **/
 typedef enum
 {
-    DHCP_MESSAGE_TYPE_DISCOVER = 1,
-    DHCP_MESSAGE_TYPE_OFFER    = 2,
-    DHCP_MESSAGE_TYPE_REQUEST  = 3,
-    DHCP_MESSAGE_TYPE_DECLINE  = 4,
-    DHCP_MESSAGE_TYPE_ACK      = 5,
-    DHCP_MESSAGE_TYPE_NAK      = 6,
-    DHCP_MESSAGE_TYPE_RELEASE  = 7,
-    DHCP_MESSAGE_TYPE_INFORM   = 8,
-    BOOTP_MESSAGE              = 9,
-    MALFORMED                  = 10,
-
+    DHCP_MESSAGE_TYPE_UNKNOWN,
+    DHCP_MESSAGE_TYPE_DISCOVER,
+    DHCP_MESSAGE_TYPE_OFFER,
+    DHCP_MESSAGE_TYPE_REQUEST,
+    DHCP_MESSAGE_TYPE_DECLINE,
+    DHCP_MESSAGE_TYPE_ACK,
+    DHCP_MESSAGE_TYPE_NAK,
+    DHCP_MESSAGE_TYPE_RELEASE,
+    DHCP_MESSAGE_TYPE_INFORM, // last of standard types
+    DHCP_MESSAGE_TYPE_BOOTP,
+    DHCP_MESSAGE_TYPE_MALFORMED,
+    DHCP_MESSAGE_TYPE_DROPPED,
     DHCP_MESSAGE_TYPE_COUNT
 } dhcp_message_type_t;
 
-enum
-{
-    OPTION_DHCP_MESSAGE_TYPE = 53,
-};
+/* db counter name array, message type range [1, 9] */
+extern const std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
 
-/** counters type */
 typedef enum
 {
-    DHCP_COUNTERS_CURRENT,      /** DHCP current counters */
-    DHCP_COUNTERS_SNAPSHOT,     /** DHCP snapshot counters */
+    DHCPV6_MESSAGE_TYPE_UNKNOWN,
+    DHCPV6_MESSAGE_TYPE_SOLICIT,
+    DHCPV6_MESSAGE_TYPE_ADVERTISE,
+    DHCPV6_MESSAGE_TYPE_REQUEST,
+    DHCPV6_MESSAGE_TYPE_CONFIRM,
+    DHCPV6_MESSAGE_TYPE_RENEW,
+    DHCPV6_MESSAGE_TYPE_REBIND,
+    DHCPV6_MESSAGE_TYPE_REPLY,
+    DHCPV6_MESSAGE_TYPE_RELEASE,
+    DHCPV6_MESSAGE_TYPE_DECLINE,
+    DHCPV6_MESSAGE_TYPE_RECONFIGURE,
+    DHCPV6_MESSAGE_TYPE_INFORMATION_REQUEST,
+    DHCPV6_MESSAGE_TYPE_RELAY_FORW,
+    DHCPV6_MESSAGE_TYPE_RELAY_REPL, // last of standard types
+    DHCPV6_MESSAGE_TYPE_MALFORMED,
+    DHCPV6_MESSAGE_TYPE_DROPPED,
+    DHCPV6_MESSAGE_TYPE_COUNT
+} dhcpv6_message_type_t;
 
-    DHCP_COUNTERS_COUNT
-} dhcp_counters_type_t;
+extern const std::string db_counter_name_v6[DHCPV6_MESSAGE_TYPE_COUNT];
 
 /** dhcp health status */
 typedef enum
@@ -66,36 +73,56 @@ typedef enum
     DHCP_MON_STATUS_INDETERMINATE,  /** DHCP relay health could not be determined */
 } dhcp_mon_status_t;
 
+/** counters type */
+typedef enum
+{
+    DHCP_COUNTERS_CURRENT,
+    DHCP_COUNTERS_SNAPSHOT,
+    DHCP_COUNTERS_CURRENT_V6,
+    DHCP_COUNTERS_SNAPSHOT_V6,
+    DHCP_COUNTERS_COUNT
+} dhcp_counters_type_t;
+
 /** dhcp check type */
 typedef enum
 {
-    DHCP_MON_CHECK_NEGATIVE,    /** Presence of relayed DHCP packets activity is flagged as unhealthy state */
-    DHCP_MON_CHECK_POSITIVE,    /** Validate that received DORA packets are relayed */
+    DHCP_MON_CHECK_NEGATIVE,            /** Presence of relayed DHCP packets activity is flagged as unhealthy state */
+    DHCP_MON_CHECK_POSITIVE,            /** Validate that received DORA packets are relayed */
+    DHCP_MON_CHECK_NEGATIVE_V6,         /** Presence of relayed DHCPv6 packets activity is flagged as unhealthy state */
+    DHCP_MON_CHECK_POSITIVE_V6,         /** Validate that received SARR packets are relayed */
+    DHCP_MON_CHECK_AGG_EQUAL_RX,        /** Validate that aggregate device rx counters equal sum of member interfaces rx counters */
+    DHCP_MON_CHECK_AGG_EQUAL_TX,        /** Validate that aggregate device tx counters equal sum of member interfaces tx counters */
+    DHCP_MON_CHECK_AGG_EQUAL_RX_V6,     /** Validate that aggregate device rx counters equal sum of member interfaces rx counters for IPv6 */
+    DHCP_MON_CHECK_AGG_EQUAL_TX_V6,     /** Validate that aggregate device tx counters equal sum of member interfaces tx counters for IPv6 */
+    DHCP_MON_CHECK_AGG_MULTIPLE_RX,     /** Validate that aggregate device rx counters are multiple of member interfaces rx counters */
+    DHCP_MON_CHECK_AGG_MULTIPLE_TX,     /** Validate that aggregate device tx counters are multiple of member interfaces tx counters */
+    DHCP_MON_CHECK_AGG_MULTIPLE_RX_V6,  /** Validate that aggregate device rx counters are multiple of member interfaces rx counters for IPv6 */
+    DHCP_MON_CHECK_AGG_MULTIPLE_TX_V6   /** Validate that aggregate device tx counters are multiple of member interfaces tx counters for IPv6 */
 } dhcp_mon_check_t;
 
-typedef enum
-{
-    DHCP_VALID,
-    DHCP_INVALID,
-    DHCP_UNKNOWN
-} dhcp_mon_packet_valid_type_t;
+/** Monitored DHCP message type */
+extern const dhcp_message_type_t monitored_msgs[];
+
+/** Number of monitored DHCP message type */
+extern uint8_t monitored_msg_sz;
+
+/** Monitored DHCPv6 message type */
+extern const dhcpv6_message_type_t monitored_v6_msgs[];
+
+/** Number of monitored DHCPv6 message type */
+extern uint8_t monitored_v6_msg_sz;
 
 /** DHCP device (interface) context */
 typedef struct
 {
-    int rx_sock;                    /** Raw socket associated with this device/interface to count rx packets */
-    int tx_sock;                    /** Raw socket associated with this device/interface to count tx packets*/
-    in_addr_t ip;                   /** network address of this device (interface) */
-    uint8_t mac[ETHER_ADDR_LEN];    /** hardware address of this device (interface) */
-    in_addr_t giaddr_ip;            /** Gateway IP address */
-    uint8_t is_uplink;              /** north interface? */
-    char intf[IF_NAMESIZE];         /** device (interface) name */
-    size_t snaplen;                 /** snap length or buffer size */
-    uint64_t counters[DHCP_COUNTERS_COUNT][DHCP_DIR_COUNT][DHCP_MESSAGE_TYPE_COUNT];
-                                    /** current/snapshot counters of DHCP packets */
+    uint8_t mac[ETHER_ADDR_LEN];        /** hardware address of this device (interface) */
+    bool is_uplink;                  /** north interface? */
+    bool is_downlink;                /** south interface? */
+    char intf[IF_NAMESIZE];             /** device (interface) name */
+    struct in_addr ip;                  /** network address of this device (interface) */
+    struct in6_addr ipv6_gua;               /** network address of this device (interface) */
+    struct in6_addr ipv6_lla;           /** link local address of this device (interface) */
 } dhcp_device_context_t;
-
-extern std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
 
 /**
  * @code initialize_intf_mac_and_ip_addr(context);
@@ -104,144 +131,82 @@ extern std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
  *
  * @param context           pointer to device (interface) context
  *
- * @return 0 on success, otherwise for failure
+ * @return 0 on success, negative for failure
  */
 int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context);
 
 /**
  * @code dhcp_device_get_ip(context, ip);
  *
- * @brief Accessor method
+ * @brief Accessor method, retrieves device (interface) IP address from context and store it in ip if ip is not NULL
  *
  * @param context       pointer to device (interface) context
  * @param ip(out)       pointer to device IP
- *
- * @return 0 on success, otherwise for failure
- */
-int dhcp_device_get_ip(dhcp_device_context_t *context, in_addr_t *ip);
-
-/**
- * @code dhcp_device_get_aggregate_context();
- *
- * @brief Accessor method
- *
- * @return pointer to aggregate device (interface) context
- */
-dhcp_device_context_t* dhcp_device_get_aggregate_context();
-
-/**
- * @code dhcp_device_get_counter(dhcp_packet_direction_t dir);
- * @brief Accessor method
- * @return pointer to counter
- */
-std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_device_get_counter(dhcp_packet_direction_t dir);
-
-/**
- * @code dhcp_device_init(context, intf, is_uplink);
- *
- * @brief initializes device (interface) that handles packet capture per interface.
- *
- * @param context(inout)    pointer to device (interface) context
- * @param intf              interface name
- * @param is_uplink         uplink interface
- *
- * @return 0 on success, otherwise for failure
- */
-int dhcp_device_init(dhcp_device_context_t **context,
-                     const char *intf,
-                     uint8_t is_uplink);
-
-/**
- * @code int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
- *
- * @brief starts packet capture on this interface
- *
- * @param snaplen           length of packet capture
- * @param rx_event_mgr      evnet mgr for rx event
- * @param tx_event_mgr      event mgr for for tx event
- * @param giaddr_ip         gateway IP address
- *
- * @return 0 on success, otherwise for failure
- */
-int dhcp_device_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr, in_addr_t giaddr_ip);
-
-/**
- * @code dhcp_device_shutdown(context);
- *
- * @brief shuts down device (interface). Also, stops packet capture on interface and cleans up any allocated memory
- *
- * @param context   Device (interface) context
- *
- * @return nonedhcp_device_shutdown
- */
-void dhcp_device_shutdown(dhcp_device_context_t *context);
-
-/**
- * @code dhcp_device_get_status(check_type, context);
- *
- * @brief collects DHCP relay status info for a given interface. If context is null, it will report aggregate
- *        status
- *
- * @param check_type        Type of validation
- * @param context           Device (interface) context
- *
- * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
- */
-dhcp_mon_status_t dhcp_device_get_status(dhcp_mon_check_t check_type, dhcp_device_context_t *context);
-
-/**
- * @code dhcp_device_update_snapshot(context);
- *
- * @param context   Device (interface) context
- *
- * @brief Update device/interface counters snapshot
- */
-void dhcp_device_update_snapshot(dhcp_device_context_t *context);
-
-/**
- * @code dhcp_device_print_status(context, type);
- *
- * @brief prints status counters to syslog. If context is null, it will print aggregate status
- *
- * @param context       Device (interface) context
- * @param counters_type Counter type to be printed
+ * @param ipv6_gua(out) pointer to device IPv6 GUA
+ * @param ipv6_lla(out) pointer to device IPv6 LLA
  *
  * @return none
  */
-void dhcp_device_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type);
+void dhcp_device_get_ip(const dhcp_device_context_t *context, in_addr *ip, in6_addr *ipv6_gua, in6_addr *ipv6_lla);
 
 /**
- * @code                void initialize_db_counter(const std::string &ifname)
- * @brief               Initialize the counter in counters_db with interface name
+ * @code dhcp_device_init(ifname, is_uplink);
+ *
+ * @brief initializes device (interface) that handles packet capture per interface.
+ *
  * @param ifname        interface name
- * @return              none
+ * @param intf_type     'u' for uplink (north) interface, 'd' for downlink (south) interface, 'm' for mgmt interface
+ *
+ * @return pointer to device (interface) context on success, NULL otherwise
  */
-void initialize_db_counters(const std::string &ifname);
+dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type);
 
 /**
- * @code initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
- * @brief Initialize cache counter per interface
- * @param counters         counter data
- * @param interface_name   string value of interface name
+ * @code dhcp_device_free(context);
+ *
+ * @brief frees device (interface) context
+ *
+ * @param context       pointer to device (interface) context
+ *
+ * @return none
  */
-void initialize_cache_counter(std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>> &counters, std::string interface_name);
+void dhcp_device_free(dhcp_device_context_t *context);
 
 /**
- * @code                void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir)
- * @brief               Increase cache counter
- * @param ifname        Interface name
- * @param type          Packet type
- * @param dir           Packet direction
- * @return              none
+ * @code dhcp_device_get_status(ifname, check_type);
+ *
+ * @brief collects DHCPv4/v6 relay status info for a given interface. The interface name can be context interface name,
+ *        physical interface name under context interface, or aggregate interface name.
+ *
+ * @param ifname            Interface name
+ * @param check_type        Type of validation
+ *
+ * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
-void increase_cache_counter(std::string &ifname, uint8_t type, dhcp_packet_direction_t dir);
+dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_mon_check_t check_type);
 
 /**
- * @code                std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter)
- * @brief               Generate JSON string by counter dict
- * @param counter       Counter dict
- * @return              none
+ * @code dhcp_device_print_status(ifname, type);
+ *
+ * @brief prints status counters to syslog.
+ *
+ * @param ifname           interface name
+ * @param type             counter type
+ *
+ * @return none
  */
-std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter);
+void dhcp_device_print_status(const std::string &ifname, dhcp_counters_type_t type);
+
+/**
+ * @code dhcp_device_print_status_debug(ifname, type);
+ *
+ * @brief prints status counters to syslog when debug_on is true.
+ *
+ * @param ifname           interface name
+ * @param type              counter type
+ *
+ * @return none
+ */
+void dhcp_device_print_status_debug(const std::string &ifname, dhcp_counters_type_t type);
 
 #endif /* DHCP_DEVICE_H_ */

@@ -16,12 +16,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "subscriberstatetable.h"
-#include "select.h"
+#include <swss/subscriberstatetable.h>
+#include <swss/select.h>
 
-#include "dhcp_mon.h"
-#include "dhcp_devman.h"
-#include "dhcp_device.h"
+#include "dhcp_mon.h" // starting dhcpmon
+#include "dhcp_devman.h" // for registering interfaces
+#include "util.h" // for setting debug mode
 
 /** dhcpmon_default_snaplen: default snap length of packet being captured */
 static const size_t dhcpmon_default_snaplen = 65535;
@@ -33,7 +33,6 @@ static const uint32_t dhcpmon_default_health_check_window = 18;
 static const uint32_t dhcpmon_default_unhealthy_max_count = 10;
 /** dhcpmon_default_db_update_interval: default value for a db update interval */
 static const uint32_t dhcpmon_default_db_update_interval = 20;
-bool dual_tor_sock = false;
 
 /**
  * @code usage(prog);
@@ -124,94 +123,95 @@ int main(int argc, char **argv)
     int db_update_interval = dhcpmon_default_db_update_interval;
     size_t snaplen = dhcpmon_default_snaplen;
     int make_daemon = 0;
-    bool debug_mode = false;
     errno = 0;
 
     setlogmask(LOG_UPTO(LOG_INFO));
     openlog(basename(argv[0]), LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
+    syslog(LOG_INFO, "Starting dhcpmon...");
+
     for (i = 1; i < argc;) {
         if ((argv[i] == NULL) || (argv[i][0] != '-')) {
             break;
         }
-        switch (argv[i][1])
-        {
-        case 'h':
-            usage(basename(argv[0]));
-            break;
-        case 'i':
-            if (dhcp_devman_add_intf(argv[i + 1], argv[i][2]) != 0) {
+        switch (argv[i][1]) {
+            case 'h':
+                usage(basename(argv[0]));
+                break;
+            case 'i':
+                if (dhcp_devman_add_intf(argv[i + 1], argv[i][2]) != 0) {
+                    usage(basename(argv[0]));
+                }
+                i += 2;
+                break;
+            case 'u':
+                if (dhcp_devman_setup_dual_tor_mode(argv[i + 1]) != 0) {
+                    usage(basename(argv[0]));
+                }
+                i += 2;
+                break;
+            case 'd':
+                make_daemon = 1;
+                i++;
+                break;
+            case 's':
+                snaplen = strtol(argv[i + 1], &endptr, 10);
+                if (errno != 0 || *endptr != '\0') {
+                    fprintf(stderr, "%s: %s: Invalid snap length\n", basename(argv[0]), argv[i + 1]);
+                    usage(basename(argv[0]));
+                }
+                i += 2;
+                break;
+            case 'w':
+                window_interval = strtol(argv[i + 1], &endptr, 10);
+                if (errno != 0 || *endptr != '\0') {
+                    fprintf(stderr, "%s: %s: Invalid window interval\n", basename(argv[0]), argv[i + 1]);
+                    usage(basename(argv[0]));
+                }
+                i += 2;
+                break;
+            case 'c':
+                max_unhealthy_count = strtol(argv[i + 1], &endptr, 10);
+                if (errno != 0 || *endptr != '\0') {
+                    fprintf(stderr, "%s: %s: Invalid max unhealthy count\n", basename(argv[0]), argv[i + 1]);
+                    usage(basename(argv[0]));
+                }
+                i += 2;
+                break;
+            case 'D':
+                debug_on = true;
+                i += 1;
+                break;
+            case 'I':
+                db_update_interval = strtol(argv[i + 1], &endptr, 10);
+                if (errno != 0 || *endptr != '\0') {
+                    fprintf(stderr, "%s: %s: Invalid DB update interval\n", basename(argv[0]), argv[i + 1]);
+                    usage(basename(argv[0]));
+                }
+                i += 2;
+                break;
+            default:
+                fprintf(stderr, "%s: %c: Unknown option\n", basename(argv[0]), argv[i][1]);
                 usage(basename(argv[0]));
             }
-            i += 2;
-            break;
-        case 'u':
-            dual_tor_sock = true;
-            if (dhcp_devman_setup_dual_tor_mode(argv[i + 1]) != 0) {
-                usage(basename(argv[0]));
-            }
-            i += 2;
-            break;
-        case 'd':
-            make_daemon = 1;
-            i++;
-            break;
-        case 's':
-            snaplen = strtol(argv[i + 1], &endptr, 10);
-            if (errno != 0 || *endptr != '\0') {
-                fprintf(stderr, "%s: %s: Invalid snap length\n", basename(argv[0]), argv[i + 1]);
-                usage(basename(argv[0]));
-            }
-            i += 2;
-            break;
-        case 'w':
-            window_interval = strtol(argv[i + 1], &endptr, 10);
-            if (errno != 0 || *endptr != '\0') {
-                fprintf(stderr, "%s: %s: Invalid window interval\n", basename(argv[0]), argv[i + 1]);
-                usage(basename(argv[0]));
-            }
-            i += 2;
-            break;
-        case 'c':
-            max_unhealthy_count = strtol(argv[i + 1], &endptr, 10);
-            if (errno != 0 || *endptr != '\0') {
-                fprintf(stderr, "%s: %s: Invalid max unhealthy count\n", basename(argv[0]), argv[i + 1]);
-                usage(basename(argv[0]));
-            }
-            i += 2;
-            break;
-        case 'D':
-            debug_mode = true;
-            i += 1;
-            break;
-        case 'I':
-            db_update_interval = strtol(argv[i + 1], &endptr, 10);
-            if (errno != 0 || *endptr != '\0') {
-                fprintf(stderr, "%s: %s: Invalid DB update interval\n", basename(argv[0]), argv[i + 1]);
-                usage(basename(argv[0]));
-            }
-            i += 2;
-            break;
-        default:
-            fprintf(stderr, "%s: %c: Unknown option\n", basename(argv[0]), argv[i][1]);
-            usage(basename(argv[0]));
-        }
     }
 
     if (make_daemon) {
         dhcpmon_daemonize();
     }
 
-    if ((dhcp_mon_init(window_interval, max_unhealthy_count, db_update_interval) == 0) &&
-        (dhcp_mon_start(snaplen, debug_mode) == 0)) {
-
-        rv = EXIT_SUCCESS;
-
-        dhcp_mon_shutdown();
+    if (dhcp_mon_init(snaplen, window_interval, max_unhealthy_count, db_update_interval) < 0) {
+        goto close_log;
+    }
+    if (dhcp_mon_start() < 0) {
+        goto free_dhcp_mon;
     }
 
-    dhcp_devman_shutdown();
+    rv = EXIT_SUCCESS;
 
+free_dhcp_mon:
+    dhcp_mon_free();
+close_log:
     closelog();
 
     return rv;
