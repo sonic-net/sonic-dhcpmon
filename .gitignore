@@ -3,3 +3,5 @@ debian/*
 !debian/compat
 !debian/control
 !debian/rules
+*.o
+*.d
