@@ -19,9 +19,7 @@
 #include <net/ethernet.h>
 #include <string>
 
-/**
- * DHCP message types
- **/
+/** DHCP message types */
 typedef enum
 {
     DHCP_MESSAGE_TYPE_UNKNOWN,
@@ -42,6 +40,7 @@ typedef enum
 /* db counter name array, message type range [1, 9] */
 extern const std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
 
+/** DHCPv6 message types */
 typedef enum
 {
     DHCPV6_MESSAGE_TYPE_UNKNOWN,
@@ -63,6 +62,7 @@ typedef enum
     DHCPV6_MESSAGE_TYPE_COUNT
 } dhcpv6_message_type_t;
 
+/* db counter name array, message type range [1, 13] */
 extern const std::string db_counter_name_v6[DHCPV6_MESSAGE_TYPE_COUNT];
 
 /** dhcp health status */
@@ -86,19 +86,19 @@ typedef enum
 /** dhcp check type */
 typedef enum
 {
-    DHCP_MON_CHECK_NEGATIVE,            /** Presence of relayed DHCP packets activity is flagged as unhealthy state */
-    DHCP_MON_CHECK_POSITIVE,            /** Validate that received DORA packets are relayed */
-    DHCP_MON_CHECK_NEGATIVE_V6,         /** Presence of relayed DHCPv6 packets activity is flagged as unhealthy state */
-    DHCP_MON_CHECK_POSITIVE_V6,         /** Validate that received SARR packets are relayed */
-    DHCP_MON_CHECK_AGG_EQUAL_RX,        /** Validate that aggregate device rx counters equal sum of member interfaces rx counters */
-    DHCP_MON_CHECK_AGG_EQUAL_TX,        /** Validate that aggregate device tx counters equal sum of member interfaces tx counters */
-    DHCP_MON_CHECK_AGG_EQUAL_RX_V6,     /** Validate that aggregate device rx counters equal sum of member interfaces rx counters for IPv6 */
-    DHCP_MON_CHECK_AGG_EQUAL_TX_V6,     /** Validate that aggregate device tx counters equal sum of member interfaces tx counters for IPv6 */
-    DHCP_MON_CHECK_AGG_MULTIPLE_RX,     /** Validate that aggregate device rx counters are multiple of member interfaces rx counters */
-    DHCP_MON_CHECK_AGG_MULTIPLE_TX,     /** Validate that aggregate device tx counters are multiple of member interfaces tx counters */
-    DHCP_MON_CHECK_AGG_MULTIPLE_RX_V6,  /** Validate that aggregate device rx counters are multiple of member interfaces rx counters for IPv6 */
-    DHCP_MON_CHECK_AGG_MULTIPLE_TX_V6   /** Validate that aggregate device tx counters are multiple of member interfaces tx counters for IPv6 */
-} dhcp_mon_check_t;
+    DHCP_DEVICE_CHECK_NEGATIVE,            /** Presence of relayed DHCP packets activity is flagged as unhealthy state */
+    DHCP_DEVICE_CHECK_POSITIVE,            /** Validate that received DORA packets are relayed */
+    DHCP_DEVICE_CHECK_NEGATIVE_V6,         /** Presence of relayed DHCPv6 packets activity is flagged as unhealthy state */
+    DHCP_DEVICE_CHECK_POSITIVE_V6,         /** Validate that received SARR packets are relayed */
+    DHCP_DEVICE_CHECK_AGG_EQUAL_RX,        /** Validate that aggregate device rx counters equal sum of member interfaces rx counters */
+    DHCP_DEVICE_CHECK_AGG_EQUAL_TX,        /** Validate that aggregate device tx counters equal sum of member interfaces tx counters */
+    DHCP_DEVICE_CHECK_AGG_EQUAL_RX_V6,     /** Validate that aggregate device rx counters equal sum of member interfaces rx counters for IPv6 */
+    DHCP_DEVICE_CHECK_AGG_EQUAL_TX_V6,     /** Validate that aggregate device tx counters equal sum of member interfaces tx counters for IPv6 */
+    DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX,     /** Validate that aggregate device rx counters are multiple of member interfaces rx counters */
+    DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX,     /** Validate that aggregate device tx counters are multiple of member interfaces tx counters */
+    DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX_V6,  /** Validate that aggregate device rx counters are multiple of member interfaces rx counters for IPv6 */
+    DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX_V6   /** Validate that aggregate device tx counters are multiple of member interfaces tx counters for IPv6 */
+} dhcp_device_check_t;
 
 /** Monitored DHCP message type */
 extern const dhcp_message_type_t monitored_msgs[];
@@ -112,15 +112,26 @@ extern const dhcpv6_message_type_t monitored_v6_msgs[];
 /** Number of monitored DHCPv6 message type */
 extern uint8_t monitored_v6_msg_sz;
 
+/** Device (interface) types */
+typedef enum
+{
+    DHCP_DEVICE_INTF_TYPE_UPLINK,
+    DHCP_DEVICE_INTF_TYPE_DOWNLINK,
+    DHCP_DEVICE_INTF_TYPE_MGMT,
+    DHCP_DEVICE_INTF_TYPE_COUNT
+} dhcp_device_intf_t;
+
+/** Interface type name array */
+extern const char *intf_type_name[DHCP_DEVICE_INTF_TYPE_COUNT];
+
 /** DHCP device (interface) context */
 typedef struct
 {
     uint8_t mac[ETHER_ADDR_LEN];        /** hardware address of this device (interface) */
-    bool is_uplink;                  /** north interface? */
-    bool is_downlink;                /** south interface? */
+    dhcp_device_intf_t intf_type;       /** interface type: uplink, downlink, or mgmt */
     char intf[IF_NAMESIZE];             /** device (interface) name */
     struct in_addr ip;                  /** network address of this device (interface) */
-    struct in6_addr ipv6_gua;               /** network address of this device (interface) */
+    struct in6_addr ipv6_gua;           /** network address of this device (interface) */
     struct in6_addr ipv6_lla;           /** link local address of this device (interface) */
 } dhcp_device_context_t;
 
@@ -183,7 +194,7 @@ void dhcp_device_free(dhcp_device_context_t *context);
  *
  * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
-dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_mon_check_t check_type);
+dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_check_t check_type);
 
 /**
  * @code dhcp_device_print_status(ifname, type);

@@ -35,17 +35,17 @@
 #define DHCP_MAGIC_COOKIE_OFFSET (DHCP_START_OFFSET + 236)
 /** 32-bit decimal of 99.130.83.99 (indicate DHCP packets), Refer to RFC 2131 */
 #define DHCP_MAGIC_COOKIE 1669485411
-/** The minimum value of DHCP MTU */
-#define DHCP_MTU_MIN 576
 
 /** DHCPv6 header size, excluding the variable option section}*/
 #define DHCPV6_HEADER_SIZE 4
 /** DHCPv6 relay header size, excluding the variable option section */
 #define DHCPV6_RELAY_HEADER_SIZE 34
-/** The minimum value of DHCPv6 MTU */
-#define DHCPV6_MTU_MIN 1280
 /** The maximum number of hops for DHCPv6 relay messages */
 #define DHCPV6_RELAY_MAX_HOP 8
+
+/** Minimum DHCPv4/v6 MTU */
+#define DHCP_MTU_MIN 576
+#define DHCPV6_MTU_MIN 1280
 
 enum
 {
@@ -61,13 +61,19 @@ enum
 
 #define DHCPV6_OPTION_CODE_MAX 150
 
-typedef void (*packet_handler_t)(const std::string &, const dhcp_device_context_t *, ssize_t);
+/**
+ * @typedef packet_handler_t
+ * @brief function pointer type for packet handler functions
+ * @param sock          socket descriptor
+ * @param ifname        interface name
+ * @param context       dhcp device context
+ * @param buffer_sz     size of the received buffer
+ */
+typedef void (*packet_handler_t)(int sock, const std::string &, const dhcp_device_context_t *, ssize_t);
 
 /* packet handler function for different scenarios */
-void rx_packet_handler(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz);
-void tx_packet_handler(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz);
-void rx_packet_handler_v6(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz);
-void tx_packet_handler_v6(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz);
+void packet_handler(int sock, const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz);
+void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz);
 
 /**
  * @code callback_common(fd, event, arg);

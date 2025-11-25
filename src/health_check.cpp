@@ -29,13 +29,13 @@ extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_port
 
 static dhcp_mon_status_t check_agg_health()
 {
-    return dhcp_device_get_status(agg_dev_all, DHCP_MON_CHECK_POSITIVE);
+    return dhcp_device_get_status(agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE);
 }
 
 static dhcp_mon_status_t check_mgmt_health()
 {
     if (mgmt_ifname.size() > 0) {
-        return dhcp_device_get_status(mgmt_ifname, DHCP_MON_CHECK_NEGATIVE);
+        return dhcp_device_get_status(mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE);
     }
     return DHCP_MON_STATUS_HEALTHY;
 }
@@ -61,13 +61,13 @@ static void log_mgmt_error(int duration)
 
 static dhcp_mon_status_t check_agg_health_v6()
 {
-    return dhcp_device_get_status(agg_dev_all, DHCP_MON_CHECK_POSITIVE_V6);
+    return dhcp_device_get_status(agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE_V6);
 }
 
 static dhcp_mon_status_t check_mgmt_health_v6()
 {
     if (mgmt_ifname.size() > 0) {
-        return dhcp_device_get_status(mgmt_ifname, DHCP_MON_CHECK_NEGATIVE_V6);
+        return dhcp_device_get_status(mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE_V6);
     }
     return DHCP_MON_STATUS_HEALTHY;
 }
@@ -75,12 +75,12 @@ static dhcp_mon_status_t check_mgmt_health_v6()
 static dhcp_mon_status_t check_per_interface_rx_health()
 {
     for (const auto &[vlan, _] : rev_vlan_map) {
-        if (dhcp_device_get_status(vlan, DHCP_MON_CHECK_AGG_EQUAL_RX) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(vlan, DHCP_DEVICE_CHECK_AGG_EQUAL_RX) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
     for (const auto &[portchan, _] : rev_portchan_map) {
-        if (dhcp_device_get_status(portchan, DHCP_MON_CHECK_AGG_EQUAL_RX) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(portchan, DHCP_DEVICE_CHECK_AGG_EQUAL_RX) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
@@ -96,12 +96,12 @@ static void log_agg_per_interface_rx_error(int duration)
 static dhcp_mon_status_t check_per_interface_tx_health()
 {
     for (const auto &[vlan, _] : rev_vlan_map) {
-        if (dhcp_device_get_status(vlan, DHCP_MON_CHECK_AGG_MULTIPLE_TX) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(vlan, DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
     for (const auto &[portchan, _] : rev_portchan_map) {
-        if (dhcp_device_get_status(portchan, DHCP_MON_CHECK_AGG_EQUAL_TX) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(portchan, DHCP_DEVICE_CHECK_AGG_EQUAL_TX) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
@@ -118,12 +118,12 @@ static void log_agg_per_interface_tx_error(int duration)
 static dhcp_mon_status_t check_per_interface_rx_health_v6()
 {
     for (const auto &[vlan, _] : rev_vlan_map) {
-        if (dhcp_device_get_status(vlan, DHCP_MON_CHECK_AGG_EQUAL_RX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(vlan, DHCP_DEVICE_CHECK_AGG_EQUAL_RX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
     for (const auto &[portchan, _] : rev_portchan_map) {
-        if (dhcp_device_get_status(portchan, DHCP_MON_CHECK_AGG_EQUAL_RX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(portchan, DHCP_DEVICE_CHECK_AGG_EQUAL_RX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
@@ -133,12 +133,12 @@ static dhcp_mon_status_t check_per_interface_rx_health_v6()
 static dhcp_mon_status_t check_per_interface_tx_health_v6()
 {
     for (const auto &[vlan, _] : rev_vlan_map) {
-        if (dhcp_device_get_status(vlan, DHCP_MON_CHECK_AGG_MULTIPLE_TX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(vlan, DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
     for (const auto &[portchan, _] : rev_portchan_map) {
-        if (dhcp_device_get_status(portchan, DHCP_MON_CHECK_AGG_EQUAL_TX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
+        if (dhcp_device_get_status(portchan, DHCP_DEVICE_CHECK_AGG_EQUAL_TX_V6) == DHCP_MON_STATUS_UNHEALTHY) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }

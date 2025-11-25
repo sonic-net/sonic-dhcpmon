@@ -11,8 +11,9 @@
 
 #include "packet_handler.h"
 
-#include "sock_mgr.h" /** to update to counter */
-#include "dhcp_devman.h" /** to get the interface info and context */
+#include "sock_mgr.h"             /** to update to counter */
+#include "dhcp_devman.h"          /** to get the interface info and context */
+#include "dhcp_check_profile.h"   /** to get dhcp/v6 check profile */
 #include "util.h"
 
 /**
@@ -61,208 +62,70 @@ static void increase_cache_counter(const std::string &ifname, const dhcp_device_
     }
 }
 
-/**
- * @code  check_dhcp_option_53_rx(option_53, context, iphdr, buffer);
- * @brief Check whether the received DHCP packet with given option 53 is valid for counting
- * @param option_53     DHCP option 53 value
- * @param context       pointer to device context
- * @param iphdr         pointer to IP header
- * @param buffer        pointer to the whole packet buffer
- * @return              true if valid, false otherwise
- */
-static bool check_dhcp_option_53_rx(uint8_t option_53, const dhcp_device_context_t *context, const struct iphdr *iphdr, const uint8_t *buffer)
+static bool check_dhcp_option_53(dhcp_msg_check_profile_t *profile, const dhcp_device_context_t *context, const struct iphdr *iphdr, const uint8_t *buffer)
 {
-    bool is_valid = false;
+    syslog_debug(LOG_INFO, "check_dhcp_option_53: checking dhcpv6 option 53, context interface %s", context->intf);
 
-    syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: option_53 %d on interface %s", option_53, context->intf);
-
-    switch (option_53) {
-        case DHCP_MESSAGE_TYPE_DISCOVER:
-        case DHCP_MESSAGE_TYPE_REQUEST:
-        case DHCP_MESSAGE_TYPE_DECLINE:
-        case DHCP_MESSAGE_TYPE_RELEASE:
-        case DHCP_MESSAGE_TYPE_INFORM: {
-            /**
-             * For packets from DHCP client to DHCP server, wouldn't count packets which already have other giaddr
-             * 
-             * RX packets, means received from client. Even if the packets here are all related on downstream Vlan, but TX packets with giaddr not equal
-             * to current gateway wouldn't be counted, to avoid incorrect counting, wouldn't count RX packets which already have other giaddr
-             * 
-             * TODO add support to count packets with giaddr no equal to current gateway
-             */
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message sent by client, context interface %s", context->intf);
-
-            if (context->is_uplink) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_rx: uplink rx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message on downlink context interface %s", context->intf);
-            
-            if (iphdr->daddr != INADDR_BROADCAST && iphdr->daddr != giaddr_ip.s_addr) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_rx: ip packet dst ip %s not broadcast or gateway ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&iphdr->daddr, sizeof(iphdr->daddr)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: ip packet dst ip %s is broadcast or gateway ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&iphdr->daddr, sizeof(iphdr->daddr)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                         context->intf);
-
-            in_addr packet_giaddr_ip = *((in_addr *)(buffer + DHCP_GIADDR_OFFSET));
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp packet giaddr ip %s, gateway giaddr ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&packet_giaddr_ip, sizeof(packet_giaddr_ip)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                         context->intf);
-
-            if (packet_giaddr_ip.s_addr != 0 && packet_giaddr_ip.s_addr != giaddr_ip.s_addr) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_rx: dhcp packet giaddr ip %s not 0 or gateway giaddr ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&packet_giaddr_ip, sizeof(packet_giaddr_ip)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp packet giaddr ip %s is 0 or gateway giaddr ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&packet_giaddr_ip, sizeof(packet_giaddr_ip)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message valid, context interface %s", context->intf);
-            break;
-        }
-        case DHCP_MESSAGE_TYPE_OFFER:
-        case DHCP_MESSAGE_TYPE_ACK:
-        case DHCP_MESSAGE_TYPE_NAK: {
-            /**
-            * For packets from DHCP server to DHCP client, would count packets which already have other giaddr
-            * 
-            * RX packets: means received from server. If dst ip is gateway, means the packets must target to current gateway, no need to check giaddr in dhcphdr
-            */
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message sent by server, context interface %s", context->intf);
-
-            if (context->is_downlink) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_rx: downlink rx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message on uplink context interface %s", context->intf);
-
-            if (iphdr->daddr != giaddr_ip.s_addr) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_rx: ip packet dst ip %s not gateway ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&iphdr->daddr, sizeof(iphdr->daddr)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: ip packet dst ip %s is gateway ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&iphdr->daddr, sizeof(iphdr->daddr)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message valid, context interface %s", context->intf);
-            break;
-        }
-        default:
-            // should not reach here, as option 53 is already validated before
-            syslog_debug(LOG_WARNING, "check_dhcp_option_53_rx: unknown dhcp option 53 type %d, context interface %s", option_53, context->intf);
-            break;
+    // when profile is null, it means this msg type under the circumstance (i.e. direction) should not appear
+    if (profile == NULL) {
+        syslog_debug(LOG_WARNING, "check_dhcp_option_53: profile is NULL, unexpected packet, context interface %s, drop", context->intf);
+        return false;
     }
 
-    syslog_debug(LOG_INFO, "check_dhcp_option_53_rx: dhcp message check result %s on context interface %s", is_valid ? "valid" : "invalid", context->intf);
-
-    return is_valid;
-}
-
-/**
- * @code                check_dhcp_option_53_tx(option_53, context, iphdr, buffer);
- * @brief               Check whether the transmitted DHCP packet with given option 53 is valid for counting
- * @param option_53     DHCP option 53 value
- * @param context       pointer to device context
- * @param iphdr         pointer to IP header
- * @param buffer        pointer to the whole packet buffer
- * @return              true if valid, false otherwise
- */
-static bool check_dhcp_option_53_tx(uint8_t option_53, const dhcp_device_context_t *context, const struct iphdr *iphdr, const uint8_t *buffer)
-{
-    bool is_valid = false;
-
-    syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: option_53 %d on context interface %s", option_53, context->intf);
-
-    switch (option_53) {
-        case DHCP_MESSAGE_TYPE_DISCOVER:
-        case DHCP_MESSAGE_TYPE_REQUEST:
-        case DHCP_MESSAGE_TYPE_DECLINE:
-        case DHCP_MESSAGE_TYPE_RELEASE:
-        case DHCP_MESSAGE_TYPE_INFORM: {
-            /**
-             * For packets from DHCP client to DHCP server, wouldn't count packets which already have other giaddr
-             * 
-             * TX packets: means relayed to server. Because one dhcpmon process would capture all packets go through uplink interface, hence
-             * we need to compare giaddr to make sure packets are related to current gateway, wouldn'd count packets with giaddr not equal to current gateway
-             * 
-             * TODO add support to count packets with giaddr no equal to current gateway
-             */
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message sent to server, context interface %s", context->intf);
-
-            if (context->is_downlink) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_tx: downlink tx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message on uplink context interface %s", context->intf);
-
-            in_addr packet_giaddr_ip = *((in_addr *)(buffer + DHCP_GIADDR_OFFSET));
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp packet giaddr ip %s, gateway giaddr ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&packet_giaddr_ip, sizeof(packet_giaddr_ip)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                         context->intf);
-
-            if (packet_giaddr_ip.s_addr != giaddr_ip.s_addr) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_tx: dhcp packet giaddr ip %s not gateway giaddr ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&packet_giaddr_ip, sizeof(packet_giaddr_ip)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
+    for (int i = 0; i < DHCP_CHECK_TYPE_COUNT; ++i) {
+        dhcp_msg_check_type_t check_type = (dhcp_msg_check_type_t)i;
+        // skip null profile entries
+        if ((*profile)[check_type] == NULL) {
+            continue;
+        }
+        syslog_debug(LOG_INFO, "check_dhcp_option_53: checking profile entry %s, context interface %s", get_check_type_desc(check_type), context->intf);
+        switch (check_type) {
+            case DHCP_CHECK_INTF_TYPE: {
+                std::vector<dhcp_device_intf_t> *intf_types = (std::vector<dhcp_device_intf_t> *)(*profile)[check_type];
+                if (!contains_value(*intf_types, context->intf_type)) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: interface type %s not in expected %s, context interface %s, drop",
+                                 intf_type_name[context->intf_type],
+                                 generate_vector_string(*intf_types, [](const dhcp_device_intf_t &type) { return intf_type_name[type]; }).c_str(),
+                                 context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface type %s in expected %s, context interface %s",
+                             intf_type_name[context->intf_type],
+                             generate_vector_string(*intf_types, [](const dhcp_device_intf_t &type) { return intf_type_name[type]; }).c_str(),
                              context->intf);
                 break;
             }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp packet giaddr ip %s is gateway giaddr ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&packet_giaddr_ip, sizeof(packet_giaddr_ip)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message valid, context interface %s", context->intf);
-            break;
-        }
-        case DHCP_MESSAGE_TYPE_OFFER:
-        case DHCP_MESSAGE_TYPE_ACK:
-        case DHCP_MESSAGE_TYPE_NAK: {
-            /**
-            * For packets from DHCP server to DHCP client, would count packets which already have other giaddr
-            * 
-            * TX packets: means relayed to client. The packets caputred here must related to corresponding gateway, hence no need to compare giaddr in dhcphdr
-            */
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message sent to client, context interface %s", context->intf);
-
-            if (context->is_uplink) {
-                syslog_debug(LOG_WARNING, "check_dhcp_option_53_tx: uplink tx packet, context interface %s, drop", context->intf);
+            case DHCP_CHECK_SRC_IP:
+            case DHCP_CHECK_DST_IP:
+            case DHCP_CHECK_GIADDR: {
+                std::vector<const in_addr *> *ips = (std::vector<const in_addr *> *)(*profile)[check_type];
+                const in_addr *packet_ip = check_type == DHCP_CHECK_SRC_IP ? (const in_addr *)&iphdr->saddr : check_type == DHCP_CHECK_DST_IP ? (const in_addr *)&iphdr->daddr :
+                                                                             (const in_addr *)(buffer + DHCP_GIADDR_OFFSET);
+                if (!contains_pointer(*ips, packet_ip)) {
+                    syslog_debug(LOG_WARNING, "check_dhcp_option_53: %s ip %s not in expected %s, context interface %s, drop",
+                                 check_type == DHCP_CHECK_SRC_IP ? "src" : check_type == DHCP_CHECK_DST_IP ? "dst" : "giaddr",
+                                 generate_addr_string((const uint8_t *)packet_ip, sizeof(*packet_ip)).c_str(),
+                                 generate_vector_string(*ips, [](const in_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in_addr)); }).c_str(),
+                                 context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcp_option_53: %s ip %s in expected %s, context interface %s",
+                             check_type == DHCP_CHECK_SRC_IP ? "src" : check_type == DHCP_CHECK_DST_IP ? "dst" : "giaddr",
+                             generate_addr_string((const uint8_t *)packet_ip, sizeof(*packet_ip)).c_str(),
+                             generate_vector_string(*ips, [](const in_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in_addr)); }).c_str(),
+                             context->intf);
                 break;
             }
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message on downlink context interface %s", context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message valid, context interface %s", context->intf);
-            break;
+            default: {
+                syslog_debug(LOG_WARNING, "check_dhcp_message_type: unknown dhcp check type %d, context interface %s, drop", i, context->intf);
+                return false;
+            }
         }
-        default:
-            // should not reach here, as option 53 is already validated before
-            syslog_debug(LOG_WARNING, "handle_dhcp_option_53_tx: unknown dhcp option 53 type %d, context interface %s", option_53, context->intf);
-            break;
     }
 
-    syslog_debug(LOG_INFO, "check_dhcp_option_53_tx: dhcp message check result %s on context interface %s", is_valid ? "valid" : "invalid", context->intf);
+    syslog_debug(LOG_INFO, "check_dhcp_option_53: dhcp message check passed, context interface %s", context->intf);
 
-    return is_valid;
+    return true;
 }
 
 /**
@@ -291,376 +154,180 @@ static const uint8_t* find_dhcpv6_option(uint16_t option_code, const uint8_t *dh
 }
 
 /**
- * @code check_dhcpv6_message_type_rx(dhcpv6_msg_type, context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz);
- * @brief Check whether the received DHCPv6 packet with given message type is valid for counting
- * @param dhcpv6_msg_type      DHCPv6 message type
- * @param context              pointer to device context
- * @param ip6hdr               pointer to IPv6 header
- * @param dhcp6hdr             pointer to DHCPv6 header
- * @param dhcp6_options        pointer to DHCPv6 options buffer
- * @param dhcp6_options_sz     size of DHCPv6 options buffer
- * @return                     true if valid, false otherwise
+ * @code check_dhcpv6_message_type(profile, context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz);
+ * @brief check dhcpv6 message type against the given profile
+ * @param profile           dhcpv6 message check profile
+ * @param context           pointer to device context
+ * @param ip6hdr            pointer to IPv6 header
+ * @param dhcp6hdr          pointer to dhcpv6 header
+ * @param dhcp6_options     pointer to dhcpv6 options buffer
+ * @param dhcp6_options_sz  size of dhcpv6 options buffer
+ * @return true if the message matches the profile, false otherwise
  */
-static bool check_dhcpv6_message_type_rx(uint8_t dhcpv6_msg_type, const dhcp_device_context_t *context, const struct ip6_hdr *ip6hdr,
-                                         const uint8_t *dhcp6hdr, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz)
+static bool check_dhcpv6_message_type(dhcpv6_msg_check_profile_t *profile, const dhcp_device_context_t *context, const struct ip6_hdr *ip6hdr,
+                                      const uint8_t *dhcp6hdr, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz)
 {
-    bool is_valid = false;
+    syslog_debug(LOG_INFO, "check_dhcpv6_message_type: checking dhcpv6 message type, context interface %s", context->intf);
 
-    syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message type %d, context interface %s", dhcpv6_msg_type, context->intf);
+    // when profile is null, it means this msg type under the circumstance (i.e. direction) should not appear
+    if (profile == NULL) {
+        syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: profile is NULL, unexpected packet, context interface %s, drop", context->intf);
+        return false;
+    }
 
-    switch (dhcpv6_msg_type) {
-        // DHCPv6 messages sent by client, host is server or relay
-        case DHCPV6_MESSAGE_TYPE_SOLICIT:
-        case DHCPV6_MESSAGE_TYPE_REQUEST:
-        case DHCPV6_MESSAGE_TYPE_CONFIRM:
-        case DHCPV6_MESSAGE_TYPE_RENEW:
-        case DHCPV6_MESSAGE_TYPE_REBIND:
-        case DHCPV6_MESSAGE_TYPE_RELEASE:
-        case DHCPV6_MESSAGE_TYPE_DECLINE:
-        case DHCPV6_MESSAGE_TYPE_INFORMATION_REQUEST: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message sent by client, host is server or relay, context interface %s", context->intf);
-
-            if (context->is_uplink) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: uplink packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message on downlink context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) != NULL) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay inner message found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay inner message not found, context interface %s", context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
+    for (int i = 0; i < DHCPV6_CHECK_TYPE_COUNT; ++i) {
+        dhcpv6_msg_check_type_t check_type = (dhcpv6_msg_check_type_t)i;
+        // skip null profile entries
+        if ((*profile)[check_type] == NULL) {
+            continue;
         }
-        // DHCPv6 messages sent by server, host is client
-        case DHCPV6_MESSAGE_TYPE_ADVERTISE:
-        case DHCPV6_MESSAGE_TYPE_REPLY:
-        case DHCPV6_MESSAGE_TYPE_RECONFIGURE: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message sent by server, host is client, context interface %s", context->intf);
-
-            if (context->is_downlink) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: downlink packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message on uplink context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) != NULL) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay inner message found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay inner message not found, context interface %s", context->intf);
-
-            if (memcmp(&ip6hdr->ip6_dst, &giaddr_ipv6, sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: ip6 packet dst ip %s not gateway ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&ip6hdr->ip6_dst, sizeof(ip6hdr->ip6_dst)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
+        syslog_debug(LOG_INFO, "check_dhcpv6_message_type: checking profile entry %s, context interface %s", get_check_type_desc_v6(check_type), context->intf);
+        switch (check_type) {
+            case DHCPV6_CHECK_INTF_TYPE: {
+                std::vector<dhcp_device_intf_t> *intf_types = (std::vector<dhcp_device_intf_t> *)(*profile)[check_type];
+                if (!contains_value(*intf_types, context->intf_type)) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: interface type %s not in expected %s, context interface %s, drop",
+                                 intf_type_name[context->intf_type],
+                                 generate_vector_string(*intf_types, [](const dhcp_device_intf_t &type) { return intf_type_name[type]; }).c_str(),
+                                 context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface type %s in expected %s, context interface %s",
+                             intf_type_name[context->intf_type],
+                             generate_vector_string(*intf_types, [](const dhcp_device_intf_t &type) { return intf_type_name[type]; }).c_str(),
                              context->intf);
                 break;
             }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: ip6 packet dst ip %s is gateway ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&ip6hdr->ip6_dst, sizeof(ip6hdr->ip6_dst)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
-        }
-        // DHCPv6 messages sent by client, host is server or relay
-        case DHCPV6_MESSAGE_TYPE_RELAY_FORW: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message sent by client, host is server or relay, context interface %s", context->intf);
-
-            if (context->is_uplink) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message on uplink context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message on downlink context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) == NULL) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: dhcpv6 relay message not found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay message found, context interface %s", context->intf);
-
-            if (dhcp6hdr[1] > DHCPV6_RELAY_MAX_HOP) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: dhcpv6 relay hop count %d exceeds max %d, context interface %s, drop",
-                             dhcp6hdr[1], DHCPV6_RELAY_MAX_HOP, context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay hop count %d within max %d, context interface %s",
-                         dhcp6hdr[1], DHCPV6_RELAY_MAX_HOP, context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
-        }
-        // DHCPv6 messages sent by server, host is relay
-        case DHCPV6_MESSAGE_TYPE_RELAY_REPL: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message sent by server, host is relay, context interface %s", context->intf);
-
-            if (context->is_downlink) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message on downlink context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message on uplink context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) == NULL) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: dhcpv6 relay message not found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay message found, context interface %s", context->intf);
-
-            if (memcmp(&ip6hdr->ip6_dst, &giaddr_ipv6, sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: ip6 packet dst ip %s not gateway ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&ip6hdr->ip6_dst, sizeof(ip6hdr->ip6_dst)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
+            case DHCPV6_CHECK_SRC_IP:
+            case DHCPV6_CHECK_DST_IP: {
+                std::vector<const in6_addr *> *ips = (std::vector<const in6_addr *> *)(*profile)[check_type];
+                if (!contains_pointer(*ips, check_type == DHCPV6_CHECK_SRC_IP ? (const in6_addr *)&ip6hdr->ip6_src : (const in6_addr *)&ip6hdr->ip6_dst)) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: %s ip %s not in expected %s, context interface %s, drop",
+                                 check_type == DHCPV6_CHECK_SRC_IP ? "src" : "dst",
+                                 generate_addr_string(check_type == DHCPV6_CHECK_SRC_IP ? (const uint8_t *)&ip6hdr->ip6_src : (const uint8_t *)&ip6hdr->ip6_dst, sizeof(in6_addr)).c_str(),
+                                 generate_vector_string(*ips, [](const in6_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in6_addr)); }).c_str(),
+                                 context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: %s ip %s in expected %s, context interface %s",
+                             check_type == DHCPV6_CHECK_SRC_IP ? "src" : "dst",
+                             generate_addr_string(check_type == DHCPV6_CHECK_SRC_IP ? (const uint8_t *)&ip6hdr->ip6_src : (const uint8_t *)&ip6hdr->ip6_dst, sizeof(in6_addr)).c_str(),
+                             generate_vector_string(*ips, [](const in6_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in6_addr)); }).c_str(),
                              context->intf);
                 break;
             }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: ip6 packet dst ip %s is gateway ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&ip6hdr->ip6_dst, sizeof(ip6hdr->ip6_dst)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                         context->intf);
-
-            const uint8_t *option_intf_id = find_dhcpv6_option(OPTION_DHCPV6_INTERFACE_ID, dhcp6_options, dhcp6_options_sz);
-            if (option_intf_id == NULL) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 interface id option not found, context interface %s", context->intf);
-                if (dual_tor_mode && memcmp(dhcp6hdr + 2, &vlan_ipv6_gua, sizeof(in6_addr)) != 0) {
-                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: on dual tor, dhcpv6 relay message link address %s is not vlan_ipv6_gua %s, context interface %s, drop",
-                                 generate_addr_string(dhcp6hdr + 2, sizeof(in6_addr)).c_str(),
-                                 generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(in6_addr)).c_str(),
+            case DHCPV6_CHECK_LINK_ADDR_INNER_MSG_RELAY:
+            case DHCPV6_CHECK_LINK_ADDR_INNER_MSG_NOT_RELAY: {
+                if ((*profile)[DHCPV6_CHECK_HAS_RELAY_OPT] == NULL || *((bool *)(*profile)[DHCPV6_CHECK_HAS_RELAY_OPT]) == false) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: inconsistent profile, has_relay_opt is null or false while checking link address, context interface %s, drop",
+                                 context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: has_relay_opt is true and fallthrough to %s for link address check, context interface %s",
+                             get_check_type_desc_v6(DHCPV6_CHECK_HAS_RELAY_OPT), context->intf);
+            }
+            // has_relay_opt will be run in 2 cases, first when it's own, second when there is fallthrough from the above case
+            // for the first case the pointer is guaranteed to be not null due to the check at the beginning of the loop
+            // for the second case, we have an implicit guarantee from the above case that the relay check has to exist and also be true
+            case DHCPV6_CHECK_HAS_RELAY_OPT: {
+                bool has_relay_opt = *((bool *)(*profile)[DHCPV6_CHECK_HAS_RELAY_OPT]);
+                const uint8_t *option_relay_msg = find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz);
+                if ((option_relay_msg != NULL) != has_relay_opt) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: relay msg option status not expected in dhcpv6 options, expect %s, get %s, context interface %s, drop",
+                                 has_relay_opt ? "present" : "not present", option_relay_msg != NULL ? "present" : "not present", context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: relay msg option status as expected in dhcpv6 options, expect %s, get %s, context interface %s",
+                             has_relay_opt ? "present" : "not present", option_relay_msg != NULL ? "present" : "not present", context->intf);
+                // if we are checking for relay option presence only, break here
+                if (check_type == DHCPV6_CHECK_HAS_RELAY_OPT) {
+                    break;
+                }
+                bool inner_msg_relay = (option_relay_msg[0] >= DHCPV6_MESSAGE_TYPE_RELAY_FORW);
+                if (check_type == DHCPV6_CHECK_LINK_ADDR_INNER_MSG_RELAY && inner_msg_relay == false) {
+                    syslog_debug(LOG_INFO, "check_dhcpv6_message_type: inner dhcpv6 message not relay, skip %s check, context interface %s",
+                                 get_check_type_desc_v6((dhcpv6_msg_check_type_t)DHCPV6_CHECK_LINK_ADDR_INNER_MSG_RELAY), context->intf);
+                    break;
+                }
+                if (check_type == DHCPV6_CHECK_LINK_ADDR_INNER_MSG_NOT_RELAY && inner_msg_relay == true) {
+                    syslog_debug(LOG_INFO, "check_dhcpv6_message_type: inner dhcpv6 message relay, skip %s check, context interface %s",
+                                 get_check_type_desc_v6((dhcpv6_msg_check_type_t)DHCPV6_CHECK_LINK_ADDR_INNER_MSG_NOT_RELAY), context->intf);
+                    break;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: %s is true and inner dhcpv6 message %srelay, fallthrough to %s, context interface %s",
+                             get_check_type_desc_v6(DHCPV6_CHECK_HAS_RELAY_OPT), inner_msg_relay ? "" : "not ", get_check_type_desc_v6(DHCPV6_CHECK_LINK_ADDR), context->intf);
+            }
+            case DHCPV6_CHECK_LINK_ADDR:
+            case DHCPV6_CHECK_PEER_ADDR: {
+                std::vector<const in6_addr *> *ips = (std::vector<const in6_addr *> *)(*profile)[check_type];
+                bool is_peer_addr = (check_type == DHCPV6_CHECK_PEER_ADDR);
+                const uint8_t *link_or_peer_addr = is_peer_addr ? dhcp6hdr + 18 : dhcp6hdr + 2;
+                if (!contains_pointer(*ips, (const in6_addr *)link_or_peer_addr)) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: %s address %s not in expected %s, context interface %s, drop",
+                                 is_peer_addr ? "peer" : "link",
+                                 generate_addr_string(link_or_peer_addr, sizeof(in6_addr)).c_str(),
+                                 generate_vector_string(*ips, [](const in6_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in6_addr)); }).c_str(),
+                                 context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: %s address %s in expected %s, context interface %s",
+                             is_peer_addr ? "peer" : "link",
+                             generate_addr_string(link_or_peer_addr, sizeof(in6_addr)).c_str(),
+                             generate_vector_string(*ips, [](const in6_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in6_addr)); }).c_str(),
+                             context->intf);
+                break;
+            }
+            case DHCPV6_CHECK_INTERFACE_ID: {
+                const uint8_t *option_intf_id = find_dhcpv6_option(OPTION_DHCPV6_INTERFACE_ID, dhcp6_options, dhcp6_options_sz);
+                // interface id is optional, have to check existence first
+                if (option_intf_id == NULL) {
+                    syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface id option not found (optional) in dhcpv6 options, context interface %s",
                                  context->intf);
                     break;
                 }
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: not on dual tor or dhcpv6 relay message link address %s is vlan_ipv6_gua %s, context interface %s",
-                             generate_addr_string(dhcp6hdr + 2, sizeof(in6_addr)).c_str(),
-                             generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(in6_addr)).c_str(),
-                             context->intf);
-            } else {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 interface id option found, context interface %s", context->intf);
-                uint16_t intf_id_len = ntohs(*(uint16_t *)(option_intf_id - 2));
-                if (intf_id_len != sizeof(in6_addr)) {
-                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: dhcpv6 interface id option length %d is not %d, context interface %s, drop",
-                                 intf_id_len, sizeof(in6_addr), context->intf);
-                    break;
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface id option found in dhcpv6 options, context interface %s", context->intf);
+                uint16_t option_len = ntohs(*(uint16_t *)(option_intf_id - 2));
+                if (option_len != sizeof(in6_addr)) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: interface id option length %d not equal to %zu, context interface %s, drop",
+                                 option_len, sizeof(in6_addr), context->intf);
+                    return false;
                 }
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 interface id option length %d, context interface %s", intf_id_len, context->intf);
-                if (memcmp(option_intf_id, &vlan_ipv6_gua, sizeof(in6_addr)) != 0) {
-                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: dhcpv6 interface id %s is not vlan_ipv6_gua %s, context interface %s, drop",
-                                 generate_addr_string(option_intf_id, sizeof(in6_addr)).c_str(),
-                                 generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(in6_addr)).c_str(),
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface id option length %d, context interface %s", option_len, context->intf);
+                std::vector<const in6_addr *> *ips = (std::vector<const in6_addr *> *)(*profile)[check_type];
+                if (!contains_pointer(*ips, (const in6_addr *)option_intf_id)) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: interface id %s not in expected %s, context interface %s, drop",
+                                 generate_addr_string((const uint8_t *)option_intf_id, sizeof(in6_addr)).c_str(),
+                                 generate_vector_string(*ips, [](const in6_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in6_addr)); }).c_str(),
                                  context->intf);
-                    break;
+                    return false;
                 }
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 interface id %s is vlan_ipv6_gua %s, context interface %s",
-                             generate_addr_string(option_intf_id, sizeof(in6_addr)).c_str(),
-                             generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(in6_addr)).c_str(),
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface id %s in expected %s, context interface %s",
+                             generate_addr_string((const uint8_t *)option_intf_id, sizeof(in6_addr)).c_str(),
+                             generate_vector_string(*ips, [](const in6_addr *addr) { return generate_addr_string((const uint8_t *)addr, sizeof(in6_addr)); }).c_str(),
                              context->intf);
+                break;
             }
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
+            case DHCPV6_CHECK_HOP_COUNT: {
+                uint8_t hop_count = dhcp6hdr[1];
+                if (hop_count > DHCPV6_RELAY_MAX_HOP) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: dhcpv6 relay hop count %d exceeds max %d, context interface %s, drop",
+                                hop_count, DHCPV6_RELAY_MAX_HOP, context->intf);
+                    return false;
+                }
+                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 relay hop count %d within max %d, context interface %s",
+                            hop_count, DHCPV6_RELAY_MAX_HOP, context->intf);
+                break;
+            }
+            default: {
+                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: unknown dhcpv6 check type %d, context interface %s, drop", i, context->intf);
+                return false;
+            }
         }
-        default:
-            // should not reach here, as option 53 is already validated before
-            syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: unknown dhcpv6 message type %d, context interface %s", dhcpv6_msg_type, context->intf);
-            break;
     }
 
-    syslog_debug(LOG_INFO, "check_dhcpv6_message_type_rx: dhcpv6 message check result %s on context interface %s", is_valid ? "valid" : "invalid", context->intf);
+    syslog_debug(LOG_INFO, "check_dhcpv6_message_type: dhcpv6 message passed all checks, context interface %s", context->intf);
 
-    return is_valid;
-}
-
-/**
- * @code check_dhcpv6_message_type_tx(dhcpv6_msg_type, context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz);
- * @brief Check whether the transmitted DHCPv6 packet with given message type is valid for counting
- * @param dhcpv6_msg_type      DHCPv6 message type
- * @param context              pointer to device context
- * @param ip6hdr               pointer to IPv6 header
- * @param dhcp6hdr             pointer to DHCPv6 header
- * @param dhcp6_options        pointer to DHCPv6 options buffer
- * @param dhcp6_options_sz     size of DHCPv6 options buffer
- * @return                     true if valid, false otherwise
- */
-static bool check_dhcpv6_message_type_tx(uint8_t dhcpv6_msg_type, const dhcp_device_context_t *context, const struct ip6_hdr *ip6hdr,
-                                         const uint8_t *dhcp6hdr, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz)
-{
-    bool is_valid = false;
-
-    switch (dhcpv6_msg_type) {
-        // DHCPv6 messages send to server, host is client
-        case DHCPV6_MESSAGE_TYPE_SOLICIT:
-        case DHCPV6_MESSAGE_TYPE_REQUEST:
-        case DHCPV6_MESSAGE_TYPE_CONFIRM:
-        case DHCPV6_MESSAGE_TYPE_RENEW:
-        case DHCPV6_MESSAGE_TYPE_REBIND:
-        case DHCPV6_MESSAGE_TYPE_RELEASE:
-        case DHCPV6_MESSAGE_TYPE_DECLINE:
-        case DHCPV6_MESSAGE_TYPE_INFORMATION_REQUEST: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message sent to server, host is client, context interface %s", context->intf);
-
-            if (context->is_downlink) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: uplink tx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message valid, context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) != NULL) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message not found, context interface %s", context->intf);
-
-            if (memcmp(&ip6hdr->ip6_src, &giaddr_ipv6, sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: ip6 packet src ip %s not gateway ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: ip6 packet src ip %s is gateway ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
-        }
-        // DHCPv6 messages send to client, host is server or relay
-        case DHCPV6_MESSAGE_TYPE_ADVERTISE:
-        case DHCPV6_MESSAGE_TYPE_REPLY:
-        case DHCPV6_MESSAGE_TYPE_RECONFIGURE: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message sent to client, host is server or relay, context interface %s", context->intf);
-
-            if (context->is_uplink) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: uplink tx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message on downlink context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) != NULL) {
-                syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message not found, context interface %s", context->intf);
-
-            if (memcmp(&ip6hdr->ip6_src, &vlan_ipv6_gua, sizeof(in6_addr)) != 0 && memcmp(&ip6hdr->ip6_src, &vlan_ipv6_lla, sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: ip6 packet src ip %s not vlan gua %s or lla %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                             generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str(),
-                             generate_addr_string((uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: ip6 packet src ip %s is vlan gua %s or lla %s, context interface %s",
-                         generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                         generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str(),
-                         generate_addr_string((uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
-        }
-        // DHCPv6 messages send to server, host is relay
-        case DHCPV6_MESSAGE_TYPE_RELAY_FORW: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay forward message sent to server, host is relay, context interface %s", context->intf);
-
-            if (context->is_downlink) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: downlink tx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message on uplink context interface %s", context->intf);
-
-            const uint8_t *option_relay_msg = find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz);
-            if (option_relay_msg == NULL) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message not found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message found, context interface %s", context->intf);
-
-            if (memcmp(dhcp6hdr + 2, (option_relay_msg[0] < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? &giaddr_ipv6 : &zero_ipv6), sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: dhcpv6 relay message link address %s is not giaddr_ipv6 %s (inner message is not relay) "
-                                          "or zero_ipv6 %s (inner message is relay), context interface %s, drop",
-                             generate_addr_string(dhcp6hdr + 2, sizeof(in6_addr)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                             generate_addr_string((uint8_t *)&zero_ipv6, sizeof(zero_ipv6)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay message link address %s matches giaddr_ipv6 %s (inner message is not relay) "
-                                  "or zero_ipv6 %s (inner message is relay), context interface %s",
-                         generate_addr_string(dhcp6hdr + 2, sizeof(in6_addr)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                         generate_addr_string((uint8_t *)&zero_ipv6, sizeof(zero_ipv6)).c_str(),
-                         context->intf);
-
-            if (memcmp(&ip6hdr->ip6_src, &giaddr_ipv6, sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: ip6 packet src ip %s not gateway ip %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                             generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: ip6 packet src ip %s is gateway ip %s, context interface %s",
-                         generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                         generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
-        }
-        // DHCPv6 messages send to relay, host is server or relay
-        case DHCPV6_MESSAGE_TYPE_RELAY_REPL: {
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay reply message sent to relay, host is server or relay, context interface %s", context->intf);
-
-            if (context->is_uplink) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: uplink tx packet, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message on downlink context interface %s", context->intf);
-
-            if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) == NULL) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message not found, context interface %s, drop", context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 relay inner message found, context interface %s", context->intf);
-
-            if (memcmp(&ip6hdr->ip6_src, &vlan_ipv6_gua, sizeof(in6_addr)) != 0 && memcmp(&ip6hdr->ip6_src, &vlan_ipv6_lla, sizeof(in6_addr)) != 0) {
-                syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_tx: ip6 packet src ip %s not vlan gua %s or lla %s, context interface %s, drop",
-                             generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                             generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str(),
-                             generate_addr_string((uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str(),
-                             context->intf);
-                break;
-            }
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: ip6 packet src ip %s is vlan gua %s or lla %s, context interface %s",
-                         generate_addr_string((uint8_t *)&ip6hdr->ip6_src, sizeof(ip6hdr->ip6_src)).c_str(),
-                         generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str(),
-                         generate_addr_string((uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str(),
-                         context->intf);
-
-            is_valid = true;
-            syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message valid, context interface %s", context->intf);
-            break;
-        }
-        default:
-            // should not reach here, as message type is already validated before
-            syslog_debug(LOG_WARNING, "check_dhcpv6_message_type_rx: unknown dhcpv6 message type %d, context interface %s", dhcpv6_msg_type, context->intf);
-            break;
-    }
-
-    syslog_debug(LOG_INFO, "check_dhcpv6_message_type_tx: dhcpv6 message check result %s on context interface %s", is_valid ? "valid" : "invalid", context->intf);
-
-    return is_valid;
+    return true;
 }
 
 /**
@@ -708,7 +375,7 @@ static bool validate_udp_checksum(struct udphdr *udphdr, const uint8_t *buffer, 
  */
 static bool should_ignore_rx_packet(const std::string &ifname, const dhcp_device_context_t *context)
 {
-    return dual_tor_mode && context->is_downlink && (ifname == context->intf || intf_is_standby(ifname));
+    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK && (ifname == context->intf || intf_is_standby(ifname));
 }
 
 /**
@@ -718,7 +385,7 @@ static bool should_ignore_rx_packet(const std::string &ifname, const dhcp_device
  */
 static bool should_dup_rx_packet(const std::string &ifname, const dhcp_device_context_t *context)
 {
-    return dual_tor_mode && context->is_downlink && ifname != context->intf && !intf_is_standby(ifname);
+    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK && ifname != context->intf && !intf_is_standby(ifname);
 }
 
 /**
@@ -870,6 +537,7 @@ static struct udphdr* ipv6_sanity_check(const std::string &ifname, const uint8_t
 static bool udp_sanity_check(const std::string &ifname, struct udphdr *udphdr, const uint8_t *buffer, ssize_t buffer_sz, bool is_v6, bool check_checksum)
 {
     // udphdr len is the length of the udp packet including the udphdr and payload
+    // it was misunderstood by previous implementation as only the payload length
     if (ntohs(udphdr->len) < sizeof(struct udphdr) + (is_v6 ? DHCPV6_HEADER_SIZE : DHCP_HEADER_SIZE)) {
         syslog_debug(LOG_WARNING, "udp_sanity_check: received udp packet size %d is too small to include dhcp header size %zd, interface %s",
                      ntohs(udphdr->len), is_v6 ? DHCPV6_HEADER_SIZE : DHCP_HEADER_SIZE, ifname.c_str());
@@ -893,21 +561,6 @@ static bool udp_sanity_check(const std::string &ifname, struct udphdr *udphdr, c
     syslog_debug(LOG_INFO, "udp_sanity_check: udp checksum validation passed: interface %s", ifname.c_str());
 
     return true;
-}
-
-/**
- * @code get_dhcp_options_sz(udphdr, buffer_sz);
- *
- * @brief calculate dhcp options size from udp header and buffer size
- *
- * @return dhcp options size
- */
-static ssize_t get_dhcp_options_sz(const struct udphdr *udphdr, ssize_t buffer_sz)
-{
-    // potential dhcp_options_sz can be calculated from udp len - udp hdr len and buffer_sz - all headers, and we pick the smaller
-    ssize_t dhcp_sz = ntohs(udphdr->len) - sizeof(struct udphdr) < buffer_sz - DHCP_START_OFFSET ?
-                      ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - DHCP_START_OFFSET;
-    return dhcp_sz - DHCP_HEADER_SIZE;
 }
 
 /**
@@ -956,19 +609,11 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
     return true;
 }
 
-/**
- * @code client_packet_handler(ifname, context, buffer, buffer_sz);
- * @brief packet handler to process received rx
- * @param ifname        socket interface
- * @param context       pointer to device (interface) context
- * @param buffer_sz     size of the received buffer
- * @return none
- */
-void rx_packet_handler(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz)
+void packet_handler(int sock, const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz)
 {
-    sock_info_t &sock_info = sock_mgr_get_sock_info(rx_sock);
-    
-    syslog_debug(LOG_INFO, "rx_packet_handler: handle packet on interface %s, context %s, buffer size %zd", ifname.c_str(), context->intf, buffer_sz);
+    sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+
+    syslog_debug(LOG_INFO, "packet_handler %s: handle packet on interface %s, context %s, buffer size %zd", sock_info.name, ifname.c_str(), context->intf, buffer_sz);
     
     // handler will be invoked for physical interface and context interface, so both counters will be updated
     // For single tor and dualtor uplink, no special care is needed
@@ -977,348 +622,217 @@ void rx_packet_handler(const std::string &ifname, const dhcp_device_context_t *c
     //   - Ignore packet captured in context interface and standby physical interface
     //   - When capture packet in non-standby physical interface, update context interface and physical
     //     interface count together
-    if (should_ignore_rx_packet(ifname, context)) {
-        syslog_debug(LOG_INFO, "rx_packet_handler: ignore packet on interface %s, context %s, because is dual tor downlink standby interface",
-                     ifname.c_str(), context->intf);
+    if (sock_info.is_rx && should_ignore_rx_packet(ifname, context)) {
+        syslog_debug(LOG_INFO, "packet_handler %s: ignore packet on interface %s, context %s, because is dual tor downlink standby interface",
+                     sock_info.name, ifname.c_str(), context->intf);
         return;
     }
 
-    bool dup_to_context = should_dup_rx_packet(ifname, context);
-    syslog_debug(LOG_INFO, "rx_packet_handler: duplicate packet from %s to context interface %s: %s",
-                 ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
+    bool dup_to_context = sock_info.is_rx && should_dup_rx_packet(ifname, context);
+    syslog_debug(LOG_INFO, "packet_handler %s: duplicate packet from %s to context interface %s: %s",
+                 sock_info.name, ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
 
+    /**
+     * The MTU was not understood correctly by early DHCP implementations,
+     * which treats this MTU as limitation on dhcp packets only.
+     * DHCP/v6 will gave a minimum MTU of 576/1280 to conform to IPv4/IPv6 minimum MTU requirements.
+     * It is a configuration given to link layer, which includes ethernet header.
+     * Also packet size going over the minimum MTU isn't some kind of an error on it's own,
+     * because the actual MTU might be well over it. In the previous implementation,
+     * this check was only applied to rx packets, which doesn't actually make sense because
+     * if packet size goes over mtu, it wouldn't be able to reach us in the first place.
+     * So when we received a packet larger than minimum MTU, it means that our current
+     * MTU is larger than minimum MTU, and that potentially, it might cause issue when the packet
+     * goes to other devices with minimum MTU only. So really it serves as a warning.
+     * It would actually make more sense to apply to tx packets, as a warning for user,
+     * that we might be having too many hops that could potentially result in overly large packet
+     * causing fragmentation or drop along the way.
+     * We would also have to move the location of this check from after ip and udp check to before them,
+     * because this check is a link layer check that precedes ip and udp layer.
+     */
+    if (buffer_sz > DHCP_MTU_MIN) {
+        syslog_debug(LOG_WARNING, "packet_handler %s: buffer_sz %zd exceeds expectation, interface %s, context %s",
+                     sock_info.name, buffer_sz, ifname.c_str(), context->intf);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        return;
+    }
+    syslog_debug(LOG_INFO, "packet_handler %s: buffer_sz check passed, buffer_sz %zd, interface %s, context %s",
+                 sock_info.name, buffer_sz, ifname.c_str(), context->intf);
+
+    // first do ip sanity check, checksum only for rx packets because of tx offload
     uint8_t *buffer = sock_info.buffer;
     struct iphdr *iphdr = (struct iphdr* )(buffer + IP_START_OFFSET);
-    if (!ip_sanity_check(ifname, iphdr, buffer_sz, true)) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: packet is not valid ip packet, interface %s, context %s, silent drop",
-                     ifname.c_str(), context->intf);
-        syslog_debug(LOG_WARNING, "rx_packet_handler: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+    if (!ip_sanity_check(ifname, iphdr, buffer_sz, sock_info.is_rx)) {
+        syslog_debug(LOG_WARNING, "packet_handler %s: packet is not valid ip packet, interface %s, context %s, drop",
+                     sock_info.name, ifname.c_str(), context->intf);
+        syslog_debug(LOG_WARNING, "packet_handler %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
     char src_ip[INET_ADDRSTRLEN], dst_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &iphdr->saddr, src_ip, INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &iphdr->daddr, dst_ip, INET_ADDRSTRLEN);
-    syslog_debug(LOG_INFO, "rx_packet_handler: ip sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler %s: ip sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
 
+    // then do udp sanity check, checksum only for rx packets because of tx offload
     struct udphdr *udphdr = (struct udphdr*) (buffer + UDP_START_OFFSET);
-    if (!udp_sanity_check(ifname, udphdr, buffer, buffer_sz, false, true)) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s, silent drop",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        syslog_debug(LOG_WARNING, "rx_packet_handler: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+    if (!udp_sanity_check(ifname, udphdr, buffer, buffer_sz, false, sock_info.is_rx)) {
+        syslog_debug(LOG_WARNING, "packet_handler %s: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s, silent drop",
+                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
+        syslog_debug(LOG_WARNING, "packet_handler %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    if (buffer_sz > DHCP_START_OFFSET + DHCP_MTU_MIN) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: buffer_sz %zd exceeds expectation, interface %s, context %s, src ip %s, dst ip %s",
-                     buffer_sz, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
-        return;
-    }
-    syslog_debug(LOG_INFO, "rx_packet_handler: buffer_sz check passed, buffer_sz %zd, interface %s, context %s, src ip %s, dst ip %s",
-                 buffer_sz, ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler %s: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
 
     // when magic cookie doesnt match, it can either be bootp msg or malformed
     uint32_t magic_cookie = ntohl(*((uint32_t *)(buffer + DHCP_MAGIC_COOKIE_OFFSET)));
     if (magic_cookie != DHCP_MAGIC_COOKIE) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: magic cookie mismatch, interface %s, context %s, src ip %s, dst ip %s, magic cookie in packet: 0x%X",
-                     ifname.c_str(), context->intf, src_ip, dst_ip, magic_cookie);
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_BOOTP, dup_to_context);
+        syslog_debug(LOG_WARNING, "packet_handler %s: magic cookie mismatch, interface %s, context %s, src ip %s, dst ip %s, magic cookie in packet: 0x%X",
+                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip, magic_cookie);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_BOOTP, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler: magic cookie check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler %s: magic cookie check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
 
-    const uint8_t *dhcp_option_53;
-    if ((dhcp_option_53 = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, get_dhcp_options_sz(udphdr, buffer_sz))) == NULL) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: cannot find option 53 value in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+    // extract dhcp options size
+    // potential dhcp_options_sz can be calculated from udp len - udp hdr len and buffer_sz - all headers, and we pick the smaller
+    ssize_t dhcp_sz = ntohs(udphdr->len) - sizeof(struct udphdr) < buffer_sz - DHCP_START_OFFSET ?
+                      ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - DHCP_START_OFFSET;
+    ssize_t dhcp_options_sz = dhcp_sz - DHCP_HEADER_SIZE;
+
+    // finally look for dhcp option 53
+    const uint8_t *dhcp_option_53_ptr;
+    if ((dhcp_option_53_ptr = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, dhcp_options_sz)) == NULL) {
+        syslog_debug(LOG_WARNING, "packet_handler %s: cannot find option 53 value in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler: found option 53 value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                 *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+    dhcp_message_type_t dhcp_option_53 = (dhcp_message_type_t)*dhcp_option_53_ptr;
+    syslog_debug(LOG_INFO, "packet_handler %s: found option 53 value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
 
-    if (*dhcp_option_53 > DHCP_MESSAGE_TYPE_INFORM) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: unknown option 53 value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_UNKNOWN, dup_to_context);
+    // validate option 53 value
+    if (dhcp_option_53 == 0 || dhcp_option_53 > DHCP_MESSAGE_TYPE_INFORM) {
+        syslog_debug(LOG_WARNING, "packet_handler %s: unknown option 53 value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_UNKNOWN, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler: option 53 value %d valid, interface %s, context %s, src ip %s, dst ip %s",
-                 *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler %s: option 53 value %d valid, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
 
-    if (check_dhcp_option_53_rx(*dhcp_option_53, context, iphdr, buffer)) {
-        syslog_debug(LOG_INFO, "rx_packet_handler: option 53 value %d check passed, interface %s, context %s, src ip %s, dst ip %s",
-                     *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock, *dhcp_option_53, dup_to_context);
+    // perform dhcp option 53 specific sanity check against profile
+    if (check_dhcp_option_53(sock_info.is_rx ? (*dhcp_check_profile_ptr_rx)[dhcp_option_53] : (*dhcp_check_profile_ptr_tx)[dhcp_option_53], context, iphdr, buffer)) {
+        syslog_debug(LOG_INFO, "packet_handler %s: option 53 value %d check passed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, dhcp_option_53, dup_to_context);
         return;
     } else {
-        syslog_debug(LOG_WARNING, "rx_packet_handler: option 53 value %d check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock, DHCP_MESSAGE_TYPE_DROPPED, dup_to_context);
+        syslog_debug(LOG_WARNING, "packet_handler %s: option 53 value %d check failed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_DROPPED, dup_to_context);
         return;
     }
 }
 
-/**
- * @code tx_packet_handler(ifname, context, buffer, buffer_sz);
- * @brief packet handler to process transmitted tx packets. compared to rx, since we are the one sending
- *       out the packets, we can be more lenient on some checks like packet size.
- * @param ifname        socket interface
- * @param context       pointer to device (interface) context
- * @param buffer_sz     size of the received buffer
- *
- * @return none
- */
-void tx_packet_handler(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz)
+void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz)
 {
-    sock_info_t &sock_info = sock_mgr_get_sock_info(tx_sock);
-    
-    syslog_debug(LOG_INFO, "tx_packet_handler: handle packet on interface %s, context %s, buffer size %zd", ifname.c_str(), context->intf, buffer_sz);
+    sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
 
-    uint8_t *buffer = sock_info.buffer;
-    struct iphdr *iphdr = (struct iphdr *)(buffer + IP_START_OFFSET);
-    if (!ip_sanity_check(ifname, iphdr, buffer_sz, false)) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler: packet is not valid ip packet, interface %s, context %s, silent drop",
-                     ifname.c_str(), context->intf);
-        syslog_debug(LOG_WARNING, "tx_packet_handler: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, tx_sock, DHCP_MESSAGE_TYPE_MALFORMED);
-        return;
-    }
-    char src_ip[INET_ADDRSTRLEN], dst_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &iphdr->saddr, src_ip, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &iphdr->daddr, dst_ip, INET_ADDRSTRLEN);
-    syslog_debug(LOG_INFO, "tx_packet_handler: ip sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: handle packet on interface %s, context %s, buffer size %zd", sock_info.name, ifname.c_str(), context->intf, buffer_sz);
 
-    struct udphdr *udphdr = (struct udphdr*) (buffer + UDP_START_OFFSET);
-    if (!udp_sanity_check(ifname, udphdr, buffer, buffer_sz, false, false)) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s, silent drop",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        syslog_debug(LOG_WARNING, "tx_packet_handler: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, tx_sock, DHCP_MESSAGE_TYPE_MALFORMED);
-        return;
-    }
-    syslog_debug(LOG_INFO, "tx_packet_handler: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    // when magic cookie doesnt match, it can either be bootp msg or malformed
-    uint32_t magic_cookie = ntohl(*((uint32_t *)(buffer + DHCP_MAGIC_COOKIE_OFFSET)));
-    if (magic_cookie != DHCP_MAGIC_COOKIE) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler: magic cookie mismatch, interface %s, context %s, src ip %s, dst ip %s, magic cookie in packet: 0x%X",
-                     ifname.c_str(), context->intf, src_ip, dst_ip, magic_cookie);
-        increase_cache_counter(ifname, context, tx_sock, DHCP_MESSAGE_TYPE_BOOTP);
-        return;
-    }
-    syslog_debug(LOG_INFO, "tx_packet_handler: magic cookie check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    const uint8_t *dhcp_option_53;
-    if ((dhcp_option_53 = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, get_dhcp_options_sz(udphdr, buffer_sz))) == NULL) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler: cannot find option 53 value in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock, DHCP_MESSAGE_TYPE_MALFORMED);
+    //similar to ipv4 packet handler, need to ignore rx packets on dualtor downlink standby interfaces
+    if (sock_info.is_rx && should_ignore_rx_packet(ifname, context)) {
+        syslog_debug(LOG_INFO, "packet_handler_v6 %s: ignore packet on interface %s, context %s, because is dual tor downlink standby interface",
+                     sock_info.name, ifname.c_str(), context->intf);
         return;
     }
 
-    if (*dhcp_option_53 > DHCP_MESSAGE_TYPE_INFORM) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler: unknown option 53 value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock, DHCP_MESSAGE_TYPE_UNKNOWN);
+    bool dup_to_context = sock_info.is_rx && should_dup_rx_packet(ifname, context);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: duplicate packet from %s to context interface %s: %s",
+                 sock_info.name, ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
+
+    // similar to ipv4 packet handler, check buffer size against dhcpv6 minimum mtu first
+    if (buffer_sz > DHCPV6_MTU_MIN) {
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: buffer_sz %zd exceeds expectation, interface %s, context %s",
+                     sock_info.name, buffer_sz, ifname.c_str(), context->intf);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "tx_packet_handler: option 53 value %d valid, interface %s, context %s, src ip %s, dst ip %s",
-                 *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: buffer_sz check passed, buffer_sz %zd, interface %s, context %s",
+                 sock_info.name, buffer_sz, ifname.c_str(), context->intf);
 
-    if (check_dhcp_option_53_tx(*dhcp_option_53, context, iphdr, buffer)) {
-        syslog_debug(LOG_INFO, "tx_packet_handler: option 53 value %d check passed, interface %s, context %s, src ip %s, dst ip %s",
-                     *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock, *dhcp_option_53);
-        return;
-    } else {
-        syslog_debug(LOG_WARNING, "tx_packet_handler: option 53 value %d check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     *dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock, DHCP_MESSAGE_TYPE_DROPPED);
-        return;
-    }
-}
-
-/**
- * @code  rx_packet_handler_v6(ifname, context, buffer_sz);
- * @brief packet handler to process received rx ipv6 packets
- * @param ifname        socket interface
- * @param context       pointer to device (interface) context
- * @param buffer_sz     size of the received buffer
- * @return none
- */
-void rx_packet_handler_v6(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz)
-{
-    sock_info_t &sock_info = sock_mgr_get_sock_info(rx_sock_v6);
-
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: handle packet on interface %s, context %s, buffer size %zd", ifname.c_str(), context->intf, buffer_sz);
-
-    if (should_ignore_rx_packet(ifname, context)) {
-        syslog_debug(LOG_INFO, "rx_packet_handler_v6: ignore packet on interface %s, context %s, because is dual tor downlink standby interface",
-                     ifname.c_str(), context->intf);
-        return;
-    }
-
-    bool dup_to_context = should_dup_rx_packet(ifname, context);
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: duplicate packet from %s to context interface %s: %s",
-                 ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
-
+    // first do ipv6 sanity check and get udp header
     uint8_t *buffer = sock_info.buffer;
     struct udphdr *udphdr;
     if ((udphdr = ipv6_sanity_check(ifname, buffer, buffer_sz)) == NULL) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: packet is not valid ipv6 packet with udp header, interface %s, context %s, silent drop",
-                     ifname.c_str(), context->intf);
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, rx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED,  dup_to_context);
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: packet is not valid ipv6 packet with udp header, interface %s, context %s, silent drop",
+                     sock_info.name, ifname.c_str(), context->intf);
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
     struct ip6_hdr *ip6hdr = (struct ip6_hdr *)(buffer + IP_START_OFFSET);
     char src_ip[INET6_ADDRSTRLEN], dst_ip[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &ip6hdr->ip6_src, src_ip, sizeof(src_ip));
     inet_ntop(AF_INET6, &ip6hdr->ip6_dst, dst_ip, sizeof(dst_ip));
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: ipv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: ipv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
                  
-    if (!udp_sanity_check(ifname, udphdr, buffer, buffer_sz, true, true)) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, rx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+    // then do udp sanity check, checksum only for rx packets because of tx offload
+    if (!udp_sanity_check(ifname, udphdr, buffer, buffer_sz, true, sock_info.is_rx)) {
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
 
-    if (buffer_sz > (uint8_t *)udphdr - buffer + sizeof(struct udphdr) + DHCPV6_MTU_MIN) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: received packet size %zd exceeds expectation, interface %s, context %s, src ip %s, dst ip %s",
-                     buffer_sz, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
-        return;
-    }
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: buffer_sz check passed, buffer_sz %zd, interface %s, context %s, src ip %s, dst ip %s",
-                 buffer_sz, ifname.c_str(), context->intf, src_ip, dst_ip);
-
+    // extract dhcpv6 header and validate message type
     uint8_t *dhcp6hdr = (uint8_t *)udphdr + sizeof(struct udphdr);
-    uint8_t msg_type = *dhcp6hdr;
-    if (msg_type > DHCPV6_MESSAGE_TYPE_RELAY_REPL) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: unknown dhcpv6 message type value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock_v6, DHCPV6_MESSAGE_TYPE_UNKNOWN, dup_to_context);
+    dhcpv6_message_type_t msg_type = (dhcpv6_message_type_t)*dhcp6hdr;
+    if (msg_type == 0 || msg_type > DHCPV6_MESSAGE_TYPE_RELAY_REPL) {
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: unknown dhcpv6 message type value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_UNKNOWN, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: dhcpv6 message type %d valid, interface %s, context %s, src ip %s, dst ip %s",
-                 msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 message type %d valid, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
 
+    // extract dhcpv6 options
     uint8_t *dhcp6_options = dhcp6hdr + (msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
     ssize_t dhcp6_sz = ntohs(udphdr->len) - sizeof(struct udphdr) < buffer_sz - (dhcp6hdr - buffer) ?
                        ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - (dhcp6hdr - buffer);
     ssize_t dhcp6_options_sz = dhcp6_sz - (dhcp6_options - dhcp6hdr);
 
+    // perform dhcpv6 specific sanity check
     if (!dhcpv6_sanity_check(ifname, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: dhcpv6 packet sanity check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 packet sanity check failed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
         return;
     }
-    syslog_debug(LOG_INFO, "rx_packet_handler_v6: dhcpv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
+    syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
 
-    if (check_dhcpv6_message_type_rx(msg_type, context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
-        syslog_debug(LOG_INFO, "rx_packet_handler_v6: dhcpv6 message type %d check passed, interface %s, context %s, src ip %s, dst ip %s",
-                     msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock_v6, msg_type, dup_to_context);
+    if (check_dhcpv6_message_type(sock_info.is_rx ? (*dhcpv6_check_profile_ptr_rx)[msg_type] : (*dhcpv6_check_profile_ptr_tx)[msg_type],
+                                  context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
+        syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 message type %d check passed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, msg_type, dup_to_context);
         return;
     } else {
-        syslog_debug(LOG_WARNING, "rx_packet_handler_v6: dhcpv6 message type %d check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, rx_sock_v6, DHCPV6_MESSAGE_TYPE_DROPPED, dup_to_context);
-        return;
-    }
-}
-
-/**
- * @code  tx_packet_handler_v6(ifname, context, buffer_sz);
- * @brief packet handler to process transmitted tx ipv6 packets. compared to rx, since we are the one sending
- *        out the packets, we can be more lenient on some checks like packet size.
- * @param ifname        socket interface
- * @param context       pointer to device (interface) context
- * @param buffer_sz     size of the received buffer
- * @return none
- */
-void tx_packet_handler_v6(const std::string &ifname, const dhcp_device_context_t *context, ssize_t buffer_sz)
-{
-    sock_info_t &sock_info = sock_mgr_get_sock_info(tx_sock_v6);
-
-    syslog_debug(LOG_INFO, "tx_packet_handler_v6: handle packet on interface %s, context %s, buffer size %zd", ifname.c_str(), context->intf, buffer_sz);
-
-    uint8_t *buffer = sock_info.buffer;
-    struct udphdr *udphdr;
-    if ((udphdr = ipv6_sanity_check(ifname, buffer, buffer_sz)) == NULL) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: packet is not valid ipv6 packet with udp header, interface %s, context %s", ifname.c_str(), context->intf);
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, tx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED);
-        return;
-    }
-    struct ip6_hdr *ip6hdr = (struct ip6_hdr *)(buffer + IP_START_OFFSET);
-    char src_ip[INET6_ADDRSTRLEN], dst_ip[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, &ip6hdr->ip6_src, src_ip, sizeof(src_ip));
-    inet_ntop(AF_INET6, &ip6hdr->ip6_dst, dst_ip, sizeof(dst_ip));
-    syslog_debug(LOG_INFO, "tx_packet_handler_v6: ipv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    if (!udp_sanity_check(ifname, udphdr, buffer, buffer_sz, true, false)) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: %s", generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, tx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED);
-        return;
-    }
-    syslog_debug(LOG_INFO, "tx_packet_handler_v6: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    uint8_t *dhcp6hdr = (uint8_t *)udphdr + sizeof(struct udphdr);
-    uint8_t msg_type = *dhcp6hdr;
-    if (msg_type > DHCPV6_MESSAGE_TYPE_RELAY_REPL) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: unknown dhcpv6 message type value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
-                     msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock_v6, DHCPV6_MESSAGE_TYPE_UNKNOWN);
-        return;
-    }
-    syslog_debug(LOG_INFO, "tx_packet_handler_v6: dhcpv6 message type %d valid, interface %s, context %s, src ip %s, dst ip %s",
-                 msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    uint8_t *dhcp6_options = dhcp6hdr + (msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
-    ssize_t dhcp6_sz = ntohs(udphdr->len) - sizeof(struct udphdr) < buffer_sz - (dhcp6hdr - buffer) ?
-               ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - (dhcp6hdr - buffer);
-    ssize_t dhcp6_options_sz = dhcp6_sz - (dhcp6_options - dhcp6hdr);
-
-    if (!dhcpv6_sanity_check(ifname, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: dhcpv6 packet sanity check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock_v6, DHCPV6_MESSAGE_TYPE_MALFORMED);
-        return;
-    }
-    syslog_debug(LOG_INFO, "tx_packet_handler_v6: dhcpv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
-                 ifname.c_str(), context->intf, src_ip, dst_ip);
-
-    if (check_dhcpv6_message_type_tx(msg_type, context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
-        syslog_debug(LOG_INFO, "tx_packet_handler_v6: dhcpv6 message type %d check passed, interface %s, context %s, src ip %s, dst ip %s",
-                     msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock_v6, msg_type);
-        return;
-    } else {
-        syslog_debug(LOG_WARNING, "tx_packet_handler_v6: dhcpv6 message type %d check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, tx_sock_v6, DHCPV6_MESSAGE_TYPE_DROPPED);
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 message type %d check failed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_DROPPED, dup_to_context);
         return;
     }
 }
@@ -1343,7 +857,7 @@ void callback_common(int fd, short event, void *arg)
                      sll.sll_ifindex, ifname_buf, context ? context->intf : "NULL");
         if (context != NULL) {
             debug_mask = (ifname == context->intf) && (ifname != mgmt_ifname);
-            ((packet_handler_t)sock_info.packet_handler)(ifname, context, buffer_sz);
+            ((packet_handler_t)sock_info.packet_handler)(fd, ifname, context, buffer_sz);
             debug_mask = true;
         }
     }

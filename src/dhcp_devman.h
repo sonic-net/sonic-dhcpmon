@@ -37,8 +37,13 @@ extern in6_addr loopback_ipv6_lla;
 
 /** gateway ip in dhcp, used to filter packets that pertain to our downstream vlan interface */
 extern in_addr giaddr_ip;
-extern in6_addr giaddr_ipv6;
+extern in_addr zero_ip;
+extern in6_addr giaddr_ipv6_gua;
+extern in6_addr giaddr_ipv6_lla;
 extern in6_addr zero_ipv6;
+
+extern in_addr broadcast_ip;
+extern in6_addr dhcpv6_multicast_ipv6;
 
 /** downstream interface name */
 extern std::string downstream_ifname;
@@ -93,7 +98,8 @@ int dhcp_devman_setup_dual_tor_mode(const char *name);
 /**
  * @code dhcp_devman_is_tracked_interface(ifname);
  *
- * @brief checks whether the given interface name is being tracked by dhcp device manager
+ * @brief checks whether the given interface name is being tracked by dhcp device manager,
+ *        either as a context interface, or as a member of a context interface.
  *
  * @param ifname            interface name
  *

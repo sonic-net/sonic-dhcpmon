@@ -9,9 +9,12 @@
 #include <string.h>
 #include <syslog.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
 
 #include "dhcp_devman.h"
 
+
+#include "dhcp_check_profile.h"  /** for setting check profile */
 #include "util.h"          /** for db counter key generation */
 #include <swss/subscriberstatetable.h>
 
@@ -26,8 +29,15 @@ in6_addr loopback_ipv6_gua = {0};
 in6_addr loopback_ipv6_lla = {0};
 
 in_addr giaddr_ip = {0};
-in6_addr giaddr_ipv6 = {0};
+in_addr zero_ip = {0};
+in6_addr giaddr_ipv6_gua = {0};
+in6_addr giaddr_ipv6_lla = {0};
 in6_addr zero_ipv6 = {0};
+
+in_addr broadcast_ip = {.s_addr = INADDR_BROADCAST};
+
+const char dhcpv6_multicast_ipv6_str[] = "ff02::1:2";
+in6_addr dhcpv6_multicast_ipv6 = {0};
 
 std::string downstream_ifname;
 std::string mgmt_ifname;
@@ -41,6 +51,14 @@ std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
 std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
 std::unordered_map<std::string, dhcp_device_context_t *> intfs;
+
+// dhcp check profile to use
+dhcp_check_profile_t* dhcp_check_profile_ptr_rx;
+dhcp_check_profile_t* dhcp_check_profile_ptr_tx;
+
+// dhcpv6 check profile to use
+dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_rx;
+dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_tx;
 
 /** dhcp_num_south_intf number of south interfaces */
 static uint32_t dhcp_num_south_intf = 0;
@@ -80,17 +98,19 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
             syslog(LOG_ALERT, "Failed to initialize device context for interface %s", name);
             break;
         }
+        // we expect to have exactly 1 downstream interface and we need to know it's ip
         if (intf_type == 'd') {
             downstream_ifname = name;
             syslog(LOG_INFO, "Set downstream_ifname to %s", name);
             dhcp_device_get_ip(context, &vlan_ip, &vlan_ipv6_gua, &vlan_ipv6_lla);    
             syslog(LOG_INFO, "Set vlan_ip to %s", 
-                   generate_addr_string((uint8_t *)&vlan_ip, sizeof(vlan_ip)).c_str());
+                   generate_addr_string((const uint8_t *)&vlan_ip, sizeof(vlan_ip)).c_str());
             syslog(LOG_INFO, "Set vlan_ipv6_gua to %s", 
-                   generate_addr_string((uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str());
+                   generate_addr_string((const uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str());
             syslog(LOG_INFO, "Set vlan_ipv6_lla to %s", 
-                   generate_addr_string((uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str());
+                   generate_addr_string((const uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str());
         }
+        // we also expect exactly 1 mgmt interface and it's a physical interface
         if (intf_type == 'm') {
             mgmt_ifname = name;
             syslog(LOG_INFO, "Set mgmt_ifname to %s", name);
@@ -110,8 +130,9 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
     int rv = -1;
 
     do {
-        dhcp_device_context_t loopback_context;
+        // for dual tor, loopback interface kind of replace the role of downstream interface
 
+        dhcp_device_context_t loopback_context;
         if (strlen(name) >= sizeof(loopback_context.intf)) {
             syslog(LOG_ALERT, "Loopback interface name (%s) is too long", name);
             break;
@@ -125,17 +146,17 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
             syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", name);
             break;
         }
+
         dhcp_device_get_ip(&loopback_context, &loopback_ip, &loopback_ipv6_gua, &loopback_ipv6_lla);
         syslog(LOG_INFO, "Set loopback_ip to %s", 
-               generate_addr_string((uint8_t *)&loopback_ip, sizeof(loopback_ip)).c_str());
+               generate_addr_string((const uint8_t *)&loopback_ip, sizeof(loopback_ip)).c_str());
         syslog(LOG_INFO, "Set loopback_ipv6_gua to %s", 
-               generate_addr_string((uint8_t *)&loopback_ipv6_gua, sizeof(loopback_ipv6_gua)).c_str());
+               generate_addr_string((const uint8_t *)&loopback_ipv6_gua, sizeof(loopback_ipv6_gua)).c_str());
         syslog(LOG_INFO, "Set loopback_ipv6_lla to %s", 
-               generate_addr_string((uint8_t *)&loopback_ipv6_lla, sizeof(loopback_ipv6_lla)).c_str());
-
+               generate_addr_string((const uint8_t *)&loopback_ipv6_lla, sizeof(loopback_ipv6_lla)).c_str());
         dual_tor_mode = true;
         syslog(LOG_INFO, "Set dual_tor_mode to true");
-        
+
         rv = 0;
     } while (0);
 
@@ -228,6 +249,7 @@ int dhcp_devman_init()
 {
     syslog(LOG_INFO, "Initializing dhcp device manager");
 
+    // we expect exactly 1 downstream intf and at least 1 upstream intf
     if (dhcp_num_south_intf != 1) {
         syslog(LOG_ALERT, "Invalid number of interfaces, downlink/south %d, expect 1", dhcp_num_south_intf);
         return -1;
@@ -238,9 +260,23 @@ int dhcp_devman_init()
     }
 
     giaddr_ip = dual_tor_mode ? loopback_ip : vlan_ip;
-    giaddr_ipv6 = dual_tor_mode ? loopback_ipv6_gua : vlan_ipv6_gua;
-    syslog(LOG_INFO, "Set giaddr_ip to %s", generate_addr_string((uint8_t *)&giaddr_ip, sizeof(giaddr_ip)).c_str());
-    syslog(LOG_INFO, "Set giaddr_ipv6 to %s", generate_addr_string((uint8_t *)&giaddr_ipv6, sizeof(giaddr_ipv6)).c_str());
+    giaddr_ipv6_gua = dual_tor_mode ? loopback_ipv6_gua : vlan_ipv6_gua;
+    giaddr_ipv6_lla = dual_tor_mode ? loopback_ipv6_lla : vlan_ipv6_lla;
+    inet_pton(AF_INET6, dhcpv6_multicast_ipv6_str, &dhcpv6_multicast_ipv6);
+    syslog(LOG_INFO, "Set giaddr_ip to %s", generate_addr_string((const uint8_t *)&giaddr_ip, sizeof(in_addr)).c_str());
+    syslog(LOG_INFO, "Set giaddr_ipv6_gua to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_gua, sizeof(in6_addr)).c_str());
+    syslog(LOG_INFO, "Set giaddr_ipv6_lla to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_lla, sizeof(in6_addr)).c_str());
+    syslog(LOG_INFO, "Set dhcpv6_multicast_ipv6 to %s", generate_addr_string((const uint8_t *)&dhcpv6_multicast_ipv6, sizeof(in6_addr)).c_str());
+
+    // set dhcp check profile pointers to t0 relay
+    dhcp_check_profile_ptr_rx = &dhcp_check_profile_t0_relay_rx;
+    dhcp_check_profile_ptr_tx = &dhcp_check_profile_t0_relay_tx;
+    syslog(LOG_INFO, "Set dhcp_check_profile to be t0 relay profiles");
+
+    // set dhcpv6 check profile pointers to relay
+    dhcpv6_check_profile_ptr_rx = &dhcpv6_check_profile_relay_rx;
+    dhcpv6_check_profile_ptr_tx = &dhcpv6_check_profile_relay_tx;
+    syslog(LOG_INFO, "Set dhcpv6_check_profile to be relay profiles");
 
     agg_dev_all = "Agg-" + downstream_ifname;
     agg_dev_prefix = agg_dev_all + "-";
