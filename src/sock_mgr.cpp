@@ -22,22 +22,16 @@
 int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
 
 /** String identifier of sock fd for printing */
-static const char rx_sock_name[] = "rx_sock";
-static const char tx_sock_name[] = "tx_sock";
-static const char rx_sock_name_v6[] = "rx_sock_v6";
-static const char tx_sock_name_v6[] = "tx_sock_v6";
+static const char rx_sock_name[] = "rx";
+static const char tx_sock_name[] = "tx";
+static const char rx_sock_name_v6[] = "rx_v6";
+static const char tx_sock_name_v6[] = "tx_v6";
 
 /** BPF filters for different sockets */
 static const char dhcp_inbound_filter[] = "inbound and ip and udp and (port 67 or port 68)";
 static const char dhcp_outbound_filter[] = "outbound and ip and udp and (port 67 or port 68)";
 static const char dhcpv6_inbound_filter[] = "inbound and ip6 and udp and (port 547 or port 546)";
 static const char dhcpv6_outbound_filter[] = "outbound and ip6 and udp and (port 547 or port 546)";
-
-/** Event manager names for different sockets */
-static const char rx_event_mgr_name[] = "RX";
-static const char tx_event_mgr_name[] = "TX";
-static const char rx_event_mgr_name_v6[] = "RX_V6";
-static const char tx_event_mgr_name_v6[] = "TX_V6";
 
 /** Tags for different events, so we can triiger only one type */
 static const char packet_handler_tag[] = "PacketHandler";
@@ -304,8 +298,7 @@ int sock_mgr_init(uint32_t snaplen)
         .filter = dhcp_inbound_filter, 
         .all_counters = all_counters_t(),
         .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)rx_packet_handler,
-        .event_mgr_name = rx_event_mgr_name,
+        .packet_handler = (void *)packet_handler,
     };
 
     sock_map[tx_sock] = sock_info_t {
@@ -317,8 +310,7 @@ int sock_mgr_init(uint32_t snaplen)
         .filter = dhcp_outbound_filter, 
         .all_counters = all_counters_t(),
         .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)tx_packet_handler,
-        .event_mgr_name = tx_event_mgr_name,
+        .packet_handler = (void *)packet_handler,
     };
 
     sock_map[rx_sock_v6] = sock_info_t {
@@ -330,8 +322,7 @@ int sock_mgr_init(uint32_t snaplen)
         .filter = dhcpv6_inbound_filter, 
         .all_counters = all_counters_t(),
         .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)rx_packet_handler_v6,
-        .event_mgr_name = rx_event_mgr_name_v6,
+        .packet_handler = (void *)packet_handler_v6,
     };
 
     sock_map[tx_sock_v6] = sock_info_t {
@@ -343,8 +334,7 @@ int sock_mgr_init(uint32_t snaplen)
         .filter = dhcpv6_outbound_filter, 
         .all_counters = all_counters_t(),
         .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)tx_packet_handler_v6,
-        .event_mgr_name = tx_event_mgr_name_v6,
+        .packet_handler = (void *)packet_handler_v6,
     };
 
     if (sock_mgr_init_all_buffer() < 0) {
@@ -389,9 +379,9 @@ int sock_mgr_init_event_mgr()
 {
     syslog(LOG_INFO, "Initializing event manager for all sockets");
     for (auto &[sock, info] : sock_map) {
-        info.event_mgr_ptr = new event_mgr(info.event_mgr_name);
+        info.event_mgr_ptr = new event_mgr(info.name);
         if (info.event_mgr_ptr->init_base() < 0) {
-            syslog(LOG_ALERT, "Failed to initialize event manager %s", info.event_mgr_name);
+            syslog(LOG_ALERT, "Failed to initialize event manager %s", info.name);
             sock_mgr_free_event_mgr();
             return -1;
         }
@@ -523,7 +513,7 @@ void sock_mgr_start_event_loop()
     for (auto &[sock, info] : sock_map) {
         info.event_thread = std::thread([&info]() {
         if (event_base_dispatch(info.event_mgr_ptr->get_base()) < 0) {
-            syslog(LOG_ALERT, "Could not start %s libevent dispatching loop!", info.event_mgr_name);
+            syslog(LOG_ALERT, "Could not start %s libevent dispatching loop!", info.name);
         }
         });
     }

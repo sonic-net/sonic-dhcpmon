@@ -31,7 +31,15 @@ struct udp6_pseudo_header {
     uint8_t next_header;          // Protocol number (17 for UDP)
 };
 
-bool addr_is_primary(const std::string &ifname, const in_addr *addr)
+/**
+ * @code _addr_is_primary(ifname, addr, addr_len);
+ * @brief Check if the given address is primary on the interface by querying ConfigDB.
+ * @param ifname    interface name
+ * @param addr      pointer to the address (in_addr for IPv4 or in6_addr for IPv6)
+ * @param addr_len  length of the address (4 for IPv4, 16 for IPv6)
+ * @return          true if the address is primary, false if secondary or not found
+ */
+static bool _addr_is_primary(const std::string &ifname, const uint8_t *addr, size_t addr_len)
 {
     auto match_pattern = std::string("*INTERFACE|" + ifname + "|*");
     auto keys = mConfigDbPtr->keys(match_pattern);
@@ -43,16 +51,34 @@ bool addr_is_primary(const std::string &ifname, const in_addr *addr)
             continue;
         }
         auto addr_str = key.substr(last_of_bar + 1, last_of_slash - last_of_bar - 1);
-        struct in_addr curr_addr;
-        if (inet_pton(AF_INET, addr_str.c_str(), &curr_addr) == 1 && curr_addr.s_addr == addr->s_addr) {
-            auto val = mConfigDbPtr->hget(key, "secondary");
-            return val == NULL || *val == "false";
-        } else {
-            continue;
+        if (addr_len == 4) {
+            struct in_addr curr_addr;
+            if (inet_pton(AF_INET, addr_str.c_str(), &curr_addr) == 1 && curr_addr.s_addr == ((struct in_addr *)addr)->s_addr) {
+                auto val = mConfigDbPtr->hget(key, "secondary");
+                return val == NULL || *val == "false";
+            }
         }
+        if (addr_len == 16) {
+            struct in6_addr curr_addr6;
+            if (inet_pton(AF_INET6, addr_str.c_str(), &curr_addr6) == 1 && memcmp(&curr_addr6, addr, sizeof(curr_addr6)) == 0) {
+                auto val = mConfigDbPtr->hget(key, "secondary");
+                return val == NULL || *val == "false";
+            }
+        }
+        continue;
     }
 
     return true;
+}
+
+bool addr_is_primary(const std::string &ifname, const in_addr *addr)
+{
+    return _addr_is_primary(ifname, (const uint8_t *)addr, sizeof(struct in_addr));
+}
+
+bool addr6_is_primary(const std::string &ifname, const in6_addr *addr)
+{
+    return _addr_is_primary(ifname, (const uint8_t *)addr, sizeof(struct in6_addr));
 }
 
 bool intf_is_standby(const std::string &ifname)
@@ -77,7 +103,7 @@ std::string construct_counter_db_table_key(const std::string &ifname, bool is_v6
 
 bool parse_json_str(const std::string *json_str, Json::Value* out_value) {
     if (!out_value) {
-        syslog(LOG_WARNING, "Pointer of out_value is NULL\n");
+        syslog(LOG_WARNING, "Pointer of out_value is NULL");
         return false;
     }
 
@@ -90,7 +116,7 @@ bool parse_json_str(const std::string *json_str, Json::Value* out_value) {
     if (reader->parse(json_str->c_str(), json_end, out_value, &err)) {
         return true;
     } else {
-        syslog(LOG_WARNING, "Failed to parse json str: %s, %s\n", json_begin, err.c_str());
+        syslog(LOG_WARNING, "Failed to parse json str: %s, %s", json_begin, err.c_str());
         return false;
     }
 }

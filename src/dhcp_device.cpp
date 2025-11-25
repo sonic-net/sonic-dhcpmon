@@ -35,7 +35,6 @@ const std::string db_counter_name_v6[DHCPV6_MESSAGE_TYPE_COUNT] = {
     "Decline", "Reconfigure", "Information-Request", "Relay-Forward", "Relay-Reply", "Malformed", "Dropped"
 };
 
-/** Monitored DHCP message type */
 const dhcp_message_type_t monitored_msgs[] = {
     DHCP_MESSAGE_TYPE_DISCOVER,
     DHCP_MESSAGE_TYPE_OFFER,
@@ -43,10 +42,8 @@ const dhcp_message_type_t monitored_msgs[] = {
     DHCP_MESSAGE_TYPE_ACK
 };
 
-/** Number of monitored DHCP message type */
 uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msgs);
 
-/** Monitored DHCPv6 message type */
 const dhcpv6_message_type_t monitored_v6_msgs[] = {
     DHCPV6_MESSAGE_TYPE_SOLICIT,
     DHCPV6_MESSAGE_TYPE_ADVERTISE,
@@ -56,11 +53,16 @@ const dhcpv6_message_type_t monitored_v6_msgs[] = {
     DHCPV6_MESSAGE_TYPE_RELAY_REPL
 };
 
-/** Number of monitored DHCPv6 message type */
 uint8_t monitored_v6_msg_sz = sizeof(monitored_v6_msgs) / sizeof(*monitored_v6_msgs);
 
+const char *intf_type_name[DHCP_DEVICE_INTF_TYPE_COUNT] = {
+    [DHCP_DEVICE_INTF_TYPE_UPLINK] =  "uplink (north)",
+    [DHCP_DEVICE_INTF_TYPE_DOWNLINK] = "downlink (south)",
+    [DHCP_DEVICE_INTF_TYPE_MGMT] = "management"
+};
+
 /** counter type to description */
-const char *counter_desc[DHCP_COUNTERS_COUNT] = {
+static const char *counter_desc[DHCP_COUNTERS_COUNT] = {
     [DHCP_COUNTERS_CURRENT] = "Current",
     [DHCP_COUNTERS_SNAPSHOT] = "Snapshot",
     [DHCP_COUNTERS_CURRENT_V6] = "Current_V6",
@@ -87,6 +89,8 @@ static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock
     const sock_info_t &tx_sock_info = sock_mgr_get_sock_info(tx_sock);
     const counter_t &tx_counters = tx_sock_info.all_counters.at(ifname);
     const counter_t &tx_counters_snapshot = tx_sock_info.all_counters_snapshot.at(ifname);
+
+    // when there is packet in, no packet out
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
         if (rx_counters.at(monitored_msgs[i]) > rx_counters_snapshot.at(monitored_msgs[i]) &&
             tx_counters.at(monitored_msgs[i]) <= tx_counters_snapshot.at(monitored_msgs[i])) {
@@ -142,6 +146,7 @@ static bool check_counter_increased(const std::string &ifname, int sock, const i
     const counter_t &counters = sock_info.all_counters.at(ifname);
     const counter_t &counters_snapshot = sock_info.all_counters_snapshot.at(ifname);
 
+    // true if any counter has increased
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
         if (counters.at(monitored_msgs[i]) > counters_snapshot.at(monitored_msgs[i])) {
             return true;
@@ -205,6 +210,7 @@ static bool check_counters_delta_expected(const std::string &ifname, const std::
     const counter_t &other_counters = sock_info.all_counters.at(other_ifname);
     const counter_t &other_counters_snapshot = sock_info.all_counters_snapshot.at(other_ifname);
 
+    // for every delta increase in ifname, there is delta * ratio increase in other ifname
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
         uint64_t delta = counters.at(monitored_msgs[i]) - counters_snapshot.at(monitored_msgs[i]);
         uint64_t other_delta = other_counters.at(monitored_msgs[i]) - other_counters_snapshot.at(monitored_msgs[i]);
@@ -332,36 +338,36 @@ void dhcp_device_print_status_debug(const std::string &ifname, dhcp_counters_typ
     }
 }
 
-dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_mon_check_t check_type)
+dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_check_t check_type)
 {
     if (sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz, (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
         return DHCP_MON_STATUS_INDETERMINATE;
     }
 
     switch (check_type) {
-        case DHCP_MON_CHECK_NEGATIVE:
+        case DHCP_DEVICE_CHECK_NEGATIVE:
             return dhcp_device_check_negative_health(ifname);
-        case DHCP_MON_CHECK_POSITIVE:
+        case DHCP_DEVICE_CHECK_POSITIVE:
             return dhcp_device_check_positive_health(ifname);
-        case DHCP_MON_CHECK_POSITIVE_V6:
+        case DHCP_DEVICE_CHECK_POSITIVE_V6:
             return dhcp_device_check_positive_health_v6(ifname);
-        case DHCP_MON_CHECK_NEGATIVE_V6:
+        case DHCP_DEVICE_CHECK_NEGATIVE_V6:
             return dhcp_device_check_negative_health_v6(ifname);
-        case DHCP_MON_CHECK_AGG_EQUAL_RX:
+        case DHCP_DEVICE_CHECK_AGG_EQUAL_RX:
             return dhcp_device_check_agg_equal_rx(ifname);
-        case DHCP_MON_CHECK_AGG_EQUAL_TX:
+        case DHCP_DEVICE_CHECK_AGG_EQUAL_TX:
             return dhcp_device_check_agg_equal_tx(ifname);
-        case DHCP_MON_CHECK_AGG_EQUAL_RX_V6:
+        case DHCP_DEVICE_CHECK_AGG_EQUAL_RX_V6:
             return dhcp_device_check_agg_equal_rx_v6(ifname);
-        case DHCP_MON_CHECK_AGG_EQUAL_TX_V6:
+        case DHCP_DEVICE_CHECK_AGG_EQUAL_TX_V6:
             return dhcp_device_check_agg_equal_tx_v6(ifname);
-        case DHCP_MON_CHECK_AGG_MULTIPLE_RX:
+        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX:
             return dhcp_device_check_agg_multiple_rx(ifname);
-        case DHCP_MON_CHECK_AGG_MULTIPLE_TX:
+        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX:
             return dhcp_device_check_agg_multiple_tx(ifname);
-        case DHCP_MON_CHECK_AGG_MULTIPLE_RX_V6:
+        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX_V6:
             return dhcp_device_check_agg_multiple_rx_v6(ifname);
-        case DHCP_MON_CHECK_AGG_MULTIPLE_TX_V6:
+        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX_V6:
             return dhcp_device_check_agg_multiple_tx_v6(ifname);
         default:
             break;
@@ -399,39 +405,47 @@ int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context)
         struct ifaddrs *ifaddr;
         int num_ip_addr = 0, num_ipv6_gua = 0, num_ipv6_lla = 0;
         
+        // Get all interface addresses
         if (getifaddrs(&ifaddr) < 0) {
             syslog(LOG_ALERT, "getifaddrs: %s", strerror(errno));
             break;
         }
         for (struct ifaddrs *ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+            // An interface can have no ip address, which result in NULL ptr
             if (!ifa->ifa_addr || strcmp(ifa->ifa_name, context->intf) != 0)
                 continue;
+            // For IPv4 addr we check if it's primary
             if (ifa->ifa_addr->sa_family == AF_INET) {
                 struct sockaddr_in *ip = (struct sockaddr_in *)ifa->ifa_addr;
                 if (!addr_is_primary(context->intf, &ip->sin_addr)) {
                     syslog(LOG_INFO, "Interface %s has non-primary IPv4 address %s, skipping",
                            context->intf,
-                           generate_addr_string((uint8_t *)&ip->sin_addr, sizeof(ip->sin_addr)).c_str());
+                           generate_addr_string((const uint8_t *)&ip->sin_addr, sizeof(ip->sin_addr)).c_str());
                     continue;
                 }
                 context->ip = ip->sin_addr;
                 syslog(LOG_INFO, "Interface %s has IPv4 address %s", context->intf,
-                       generate_addr_string((uint8_t *)&context->ip, sizeof(context->ip)).c_str());
+                       generate_addr_string((const uint8_t *)&context->ip, sizeof(context->ip)).c_str());
                 num_ip_addr++;
                 continue;
             }
+            // For IPv6 addr we check if it's link-local or primary
             if (ifa->ifa_addr->sa_family == AF_INET6) {
                 struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)ifa->ifa_addr;
                 if (IN6_IS_ADDR_LINKLOCAL(&ipv6->sin6_addr)) {
                     context->ipv6_lla = ipv6->sin6_addr;
                     syslog(LOG_INFO, "Interface %s has IPv6 LLA %s", context->intf,
-                           generate_addr_string((uint8_t *)&context->ipv6_lla, sizeof(context->ipv6_lla)).c_str());
+                           generate_addr_string((const uint8_t *)&context->ipv6_lla, sizeof(context->ipv6_lla)).c_str());
                     num_ipv6_lla++;
-                } else {
+                } else if (addr6_is_primary(context->intf, &ipv6->sin6_addr)) {
                     context->ipv6_gua = ipv6->sin6_addr;
                     syslog(LOG_INFO, "Interface %s has IPv6 GUA %s", context->intf,
-                           generate_addr_string((uint8_t *)&context->ipv6_gua, sizeof(context->ipv6_gua)).c_str());
+                           generate_addr_string((const uint8_t *)&context->ipv6_gua, sizeof(context->ipv6_gua)).c_str());
                     num_ipv6_gua++;
+                } else {
+                    syslog(LOG_INFO, "Interface %s has non-primary IPv6 address %s, skipping",
+                           context->intf,
+                           generate_addr_string((const uint8_t *)&ipv6->sin6_addr, sizeof(ipv6->sin6_addr)).c_str());
                 }
                 continue;
             }
@@ -467,36 +481,50 @@ dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type)
 {
     dhcp_device_context_t *context = NULL;
 
-    do {
-        syslog(LOG_INFO, "Initializing context interface %s", ifname);
+    syslog(LOG_INFO, "Initializing context interface %s", ifname);
         
-        // allocate memory for device context
-        context = (dhcp_device_context_t *)malloc(sizeof(dhcp_device_context_t));
-        if (context == NULL) {
-            syslog(LOG_ALERT, "malloc: failed to allocated device context memory for '%s'", ifname);
+    // allocate memory for device context
+    context = (dhcp_device_context_t *)malloc(sizeof(dhcp_device_context_t));
+    if (context == NULL) {
+        syslog(LOG_ALERT, "malloc: failed to allocated device context memory for '%s'", ifname);
+        goto no_free;
+    }
+
+    // set device name
+    strncpy(context->intf, ifname, sizeof(context->intf) - 1);
+    context->intf[sizeof(context->intf) - 1] = '\0';
+        
+    // set device meta data
+    if (initialize_intf_mac_and_ip_addr(context) < 0) {
+        syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", ifname);
+        goto free_context;
+    }
+        
+    // context interface can be uplink downlink or mgmt
+    switch (intf_type) {
+        case 'u':
+            context->intf_type = DHCP_DEVICE_INTF_TYPE_UPLINK;
             break;
-        }
-
-        // set device name
-        strncpy(context->intf, ifname, sizeof(context->intf) - 1);
-        context->intf[sizeof(context->intf) - 1] = '\0';
-        
-        // set device meta data
-        if (initialize_intf_mac_and_ip_addr(context) < 0) {
-            syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", ifname);
-            free(context);
-            context = NULL;
+        case 'd':
+            context->intf_type = DHCP_DEVICE_INTF_TYPE_DOWNLINK;
             break;
+        case 'm':
+            context->intf_type = DHCP_DEVICE_INTF_TYPE_MGMT;
+            break;
+        default:
+            syslog(LOG_ALERT, "Invalid interface type '%c' for interface %s", intf_type, ifname);
+            goto free_context;
         }
-        
-        context->is_uplink = intf_type == 'u';
-        context->is_downlink = intf_type == 'd';
-        syslog(LOG_INFO, "Interface %s is %s", ifname,
-               context->is_uplink ? "uplink (north)" : (context->is_downlink ? "downlink (south)" : "management"));
+    syslog(LOG_INFO, "Interface %s is %s", ifname, intf_type_name[context->intf_type]);
 
-        syslog(LOG_INFO, "Successfully initialized context interface %s", ifname);
-    } while (0);
+    syslog(LOG_INFO, "Successfully initialized context interface %s", ifname);
 
+    return context;
+
+free_context:
+    free(context);
+    context = NULL;
+no_free:
     return context;
 }
 

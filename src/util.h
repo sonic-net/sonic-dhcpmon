@@ -7,6 +7,8 @@
 #include <jsoncpp/json/json.h>
 #include <syslog.h>
 #include <unordered_map>
+#include <vector>
+#include <functional>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <netinet/ip6.h>
@@ -38,6 +40,17 @@ extern std::string agg_dev_all;
  * @return boolean
  */
 bool addr_is_primary(const std::string &ifname, const in_addr *addr);
+
+/**
+ * @code addr6_is_primary(ifname, addr);
+ *
+ * @brief helper function check if address is primary on the interface,
+ * Config db might have a secondary tag on some addresses, which means they are not primary
+ * and if not found, default is primary
+ *
+ * @return boolean
+ */
+bool addr6_is_primary(const std::string &ifname, const in6_addr *addr);
 
 /**
  * @code intf_is_standby(intf);
@@ -126,7 +139,7 @@ uint16_t calculate_udp_checksum(const struct udphdr *udphdr, const uint8_t *data
  * @param db_counter_name     Array of counter names
  * @return              generated JSON string
  */
-std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* counter, int message_type_count, const std::string *db_counter_name);
+std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t> *counter, int message_type_count, const std::string *db_counter_name);
 
 /**
  * @code                generate_addr_string(addr, addr_len);
@@ -136,6 +149,29 @@ std::string generate_json_string(const std::unordered_map<uint8_t, uint64_t>* co
  * @return              generated address string
  */
 std::string generate_addr_string(const uint8_t *addr, size_t addr_len);
+
+/**
+ * @code                generate_vector_string(v, func, delimiter);
+ * @brief               Generate a string representation of a vector by applying a function to each element
+ * @param v             The vector to convert to a string
+ * @param func          Function to convert each element to a string
+ * @param delimiter     Delimiter to separate elements in the resulting string
+ * @return              generated string representation of the vector
+ */
+template <typename T, typename Func>
+std::string generate_vector_string(const std::vector<T> &v,
+                                   Func func,
+                                   const std::string &delimiter = ", ")
+{
+    std::string result;
+    for (size_t i = 0; i < v.size(); ++i) {
+        result += func(v[i]);
+        if (i < v.size() - 1) {
+            result += delimiter;
+        }
+    }
+    return result;
+}
 
 /**
  * @code                zero_out_counter(counter);
@@ -159,7 +195,7 @@ void zero_out_counter(std::unordered_map<Key, Value> &map)
  * @return              The value associated with the key, or the default value if the key is not found
  */
 template <typename Key, typename Value>
-const Value& readonly_access(const std::unordered_map<Key, Value>& map, const Key& key, const Value& default_value=Value())
+const Value& readonly_access(const std::unordered_map<Key, Value> &map, const Key &key, const Value &default_value=Value())
 {
     auto it = map.find(key);
     if (it != map.end()) {
@@ -189,6 +225,32 @@ inline bool is_agg_counter(const std::string &ifname)
 inline std::string get_agg_counter_ifname(const std::string &ifname, const std::string &context_ifname)
 {
     return ifname != context_ifname ? agg_dev_prefix + context_ifname : agg_dev_all;
+}
+
+/**
+ * @code                contains_value(v, value);
+ * @brief               Check if a vector contains a specific value
+ * @param v             The vector to search
+ * @param value         The value to find
+ * @return              true if the value is found, false otherwise
+ */
+template <typename T>
+bool contains_value(const std::vector<T> &v, const T &value) {
+    return std::find(v.begin(), v.end(), value) != v.end();
+}
+
+/**
+ * @code                contains_pointer(v, ptr);
+ * @brief               Check if a vector of pointers contains a specific pointer (by comparing memory content)
+ * @param v             The vector of pointers to search
+ * @param ptr           The pointer to find
+ * @return              true if the pointer is found, false otherwise
+ */
+template <typename T>
+bool contains_pointer(const std::vector<const T*> &v, const T *ptr) {
+    return std::find_if(v.begin(), v.end(),
+                        [ptr](const T *element) { return memcmp(element, ptr, sizeof(T)) == 0; })
+           != v.end();
 }
 
 /**

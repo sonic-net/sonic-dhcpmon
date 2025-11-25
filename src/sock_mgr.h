@@ -34,7 +34,6 @@ typedef struct {
     all_counters_t all_counters_snapshot;
     bool pause_write_cache_to_db;
     void *packet_handler;
-    const char *event_mgr_name;
     event_mgr *event_mgr_ptr;
     std::thread event_thread;
 } sock_info_t;
