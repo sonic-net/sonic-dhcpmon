@@ -268,12 +268,12 @@ int dhcp_devman_init()
     syslog(LOG_INFO, "Set giaddr_ipv6_lla to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_lla, sizeof(in6_addr)).c_str());
     syslog(LOG_INFO, "Set dhcpv6_multicast_ipv6 to %s", generate_addr_string((const uint8_t *)&dhcpv6_multicast_ipv6, sizeof(in6_addr)).c_str());
 
-    // set dhcp check profile pointers to t0 relay
-    dhcp_check_profile_ptr_rx = &dhcp_check_profile_t0_relay_rx;
-    dhcp_check_profile_ptr_tx = &dhcp_check_profile_t0_relay_tx;
-    syslog(LOG_INFO, "Set dhcp_check_profile to be t0 relay profiles");
+    // set dhcp check profile pointers to first relay (T0/M0)
+    dhcp_check_profile_ptr_rx = &dhcp_check_profile_first_relay_rx;
+    dhcp_check_profile_ptr_tx = &dhcp_check_profile_first_relay_tx;
+    syslog(LOG_INFO, "Set dhcp_check_profile to be first relay profiles");
 
-    // set dhcpv6 check profile pointers to relay
+    // set dhcpv6 check profile pointers to relay (T0/M0/Mx)
     dhcpv6_check_profile_ptr_rx = &dhcpv6_check_profile_relay_rx;
     dhcpv6_check_profile_ptr_tx = &dhcpv6_check_profile_relay_tx;
     syslog(LOG_INFO, "Set dhcpv6_check_profile to be relay profiles");

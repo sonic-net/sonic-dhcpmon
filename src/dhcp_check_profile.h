@@ -121,11 +121,15 @@ extern dhcp_check_profile_t* dhcp_check_profile_ptr_tx;
 extern dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_rx;
 extern dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_tx;
 
-// dhcp check profile for T0 topology
-extern dhcp_check_profile_t dhcp_check_profile_t0_relay_rx;
-extern dhcp_check_profile_t dhcp_check_profile_t0_relay_tx;
+// dhcp check profile for first relay (T0/M0) topology
+extern dhcp_check_profile_t dhcp_check_profile_first_relay_rx;
+extern dhcp_check_profile_t dhcp_check_profile_first_relay_tx;
 
-// dhcpv6 check profile for T0/T1 topology
+// dhcp check profile for server (Mx) topology
+extern dhcp_check_profile_t dhcp_check_profile_server_rx;
+extern dhcp_check_profile_t dhcp_check_profile_server_tx;
+
+// dhcpv6 check profile for relay (T0/M0/Mx) topology
 extern dhcpv6_check_profile_t dhcpv6_check_profile_relay_rx;
 extern dhcpv6_check_profile_t dhcpv6_check_profile_relay_tx;
 
