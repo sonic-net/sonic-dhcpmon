@@ -633,7 +633,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
                  sock_info.name, ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
 
     /**
-     * The MTU was not understood correctly by early DHCP implementations,
+     * The MTU was not understood correctly by earlier DHCP implementations,
      * which treats this MTU as limitation on dhcp packets only.
      * DHCP/v6 will gave a minimum MTU of 576/1280 to conform to IPv4/IPv6 minimum MTU requirements.
      * It is a configuration given to link layer, which includes ethernet header.

@@ -1,32 +1,40 @@
 /**
- * @file dhcpv6_check_profile_relay.cpp
+ * @file dhcp_check_profile_relay.cpp
  * 
- * DHCPv6 check profile for dhcp relay, used in T0/T1 devices
+ * DHCP/v6 check profile for dhcp relay, used in T0/M0/Mx devices
  * 
- * For our T0/T1 topo, host is the relay between clients and servers. For DHCP, we expect forward packets going in on downlink interface
+ * For our T0/M0 topo, host is the first relay between clients and servers. For DHCP, we expect forward packets going in on downlink interface
  * and reply packets going out on downlink interface. For DHCPv6, we expect forward packets going in and reply packets going out on downlink interface,
  * and relay forward packets going out and relay reply packets going in on uplink interface.
  * The difference with DHCPv4 and v6 is that, first, DHCPv6 has relay and non-relay packets. Second, with DHCPv6, it is easy to tell that downstream
  * is client or relay because they would have different msg type (non-relay and relay), and thus handled by different check profiles. However
- * with DHCPv4, client and relay send packets of the same msg type, so we can't just mix them together. We only expect downstream client on T0 topo.
- * With T1+ topo, we might have relay downstream as well.
+ * with DHCPv4, client and relay send packets of the same msg type, so we can't just mix them together. We only expect downstream client on T0/M0 topo.
+ * With other roles, we might have relay downstream as well.
  * Moreover, for DHCP, T0 is special becauses it's the first relay, and the only relay that server is going to see (relay after the first relay does
  * not change giaddr).
+ * 
+ * For Mx topo, DHCPv6 is the same as M0, but Mx host is itself the DHCP server. So we expect different check profile for Mx. There should be nothing
+ * going in and out of uplink interface. All packets should go in and out of downlink interface.
  */
 
- #include <vector>
+#include <vector>
 
 #include "dhcp_check_profile.h"
 
 #include "dhcp_devman.h"
 
+/******************************************
+ *   DHCP First Relay Profile (T0/M0)     *
+ ******************************************/
+
 // DHCP messages sent by client
-// In case of a T0, When packets were sent from client, giaddr will always be 0, because how would client know.
+// In case of host being the first relay (T0/M0), when packets were sent from client, giaddr will always be 0, because how would client know.
 // Client communicates with relay through broadcast only. Client does unicast to server when it knows server address.
 // Previous implementation also considered packet giaddr to be giaddr of this relay, which is not possible.
-// Downstream is either client, which give 0 giaddr, or relay, which gives giaddr of its own (or even previous relay),
-// not of this relay. Also we further restricts this profile to T0 only where downstream is definitely client only.
-static dhcp_msg_check_profile_t rx_t0_relay_forward = {
+// Downstream is either client, which give 0 giaddr, or relay, which gives giaddr of its own ip (or ip of even previous relay),
+// either case the giaddr is not going to be the ip of this relay. Also we further restricts this profile to first relay (T0/M0) only
+// where downstream is definitely client only.
+static dhcp_msg_check_profile_t rx_first_relay_forward = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_DST_IP, (const void *)(new std::vector<const in_addr *>{&broadcast_ip})},
     {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&zero_ip})},
@@ -34,29 +42,29 @@ static dhcp_msg_check_profile_t rx_t0_relay_forward = {
 
 // DHCP messages sent by server or relay
 // When server receives a request, it replies to the giaddr address specified in the request packet, which is the first relay.
-// In case of a T0, this is the last relay before reaching client, so giaddr and dst_ip must be of this relay.
-static dhcp_msg_check_profile_t rx_t0_relay_reply = {
+// In case of a first relay (T0/M0), this is the last relay before reaching client, so giaddr and dst_ip must be of this relay.
+static dhcp_msg_check_profile_t rx_first_relay_reply = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_UPLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_DST_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
     {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
 };
 
 // forward packets going in on downlink interface, reply packets going in on uplink interface
-dhcp_check_profile_t dhcp_check_profile_t0_relay_rx = {
-    {DHCP_MESSAGE_TYPE_DISCOVER, &rx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_OFFER, &rx_t0_relay_reply},
-    {DHCP_MESSAGE_TYPE_REQUEST, &rx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_DECLINE, &rx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_ACK, &rx_t0_relay_reply},
-    {DHCP_MESSAGE_TYPE_NAK, &rx_t0_relay_reply},
-    {DHCP_MESSAGE_TYPE_RELEASE, &rx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_INFORM, &rx_t0_relay_forward},
+dhcp_check_profile_t dhcp_check_profile_first_relay_rx = {
+    {DHCP_MESSAGE_TYPE_DISCOVER, &rx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_OFFER, &rx_first_relay_reply},
+    {DHCP_MESSAGE_TYPE_REQUEST, &rx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_DECLINE, &rx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_ACK, &rx_first_relay_reply},
+    {DHCP_MESSAGE_TYPE_NAK, &rx_first_relay_reply},
+    {DHCP_MESSAGE_TYPE_RELEASE, &rx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_INFORM, &rx_first_relay_forward},
 };
 
 // DHCP messages sent to client
-// Relay sends reply packets to client with broadcast dst ip, and giaddr will not be unset so it remains giaddr of relay.
-static dhcp_msg_check_profile_t tx_t0_relay_reply = {
-    {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_UPLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
+// Relay sends reply packets to client with broadcast ip, and giaddr will not be unset so it remains giaddr of the first relay.
+static dhcp_msg_check_profile_t tx_first_relay_reply = {
+    {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
     {DHCP_CHECK_DST_IP, (const void *)(new std::vector<const in_addr *>{&broadcast_ip})},
     {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
@@ -64,25 +72,79 @@ static dhcp_msg_check_profile_t tx_t0_relay_reply = {
 
 // DHCP messages sent to server or relay
 // When relay receive a forward packet from client, it will set giaddr to its own address before forwarding to server.
-// For subsequent relays, packet giaddr will remain unchanged. We are T0, the first relay, so giaddr must be of this relay.
+// For subsequent relays, packet giaddr will remain unchanged. We are the first relay (T0/M0), so giaddr must be of this relay.
 // Relay does not care if it sends to a server or a relay
-static dhcp_msg_check_profile_t tx_t0_relay_forward = {
-    {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
+static dhcp_msg_check_profile_t tx_first_relay_forward = {
+    {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_UPLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
     {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
 };
 
 // reply packets going out on downlink interface, forward packets going out on uplink interface
-dhcp_check_profile_t dhcp_check_profile_t0_relay_tx = {
-    {DHCP_MESSAGE_TYPE_DISCOVER, &tx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_OFFER, &tx_t0_relay_reply},
-    {DHCP_MESSAGE_TYPE_REQUEST, &tx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_DECLINE, &tx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_ACK, &tx_t0_relay_reply},
-    {DHCP_MESSAGE_TYPE_NAK, &tx_t0_relay_reply},
-    {DHCP_MESSAGE_TYPE_RELEASE, &tx_t0_relay_forward},
-    {DHCP_MESSAGE_TYPE_INFORM, &tx_t0_relay_forward},
+dhcp_check_profile_t dhcp_check_profile_first_relay_tx = {
+    {DHCP_MESSAGE_TYPE_DISCOVER, &tx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_OFFER, &tx_first_relay_reply},
+    {DHCP_MESSAGE_TYPE_REQUEST, &tx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_DECLINE, &tx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_ACK, &tx_first_relay_reply},
+    {DHCP_MESSAGE_TYPE_NAK, &tx_first_relay_reply},
+    {DHCP_MESSAGE_TYPE_RELEASE, &tx_first_relay_forward},
+    {DHCP_MESSAGE_TYPE_INFORM, &tx_first_relay_forward},
 };
+
+/******************************************
+ *   DHCP Server Profile (Mx)             *
+ ******************************************/
+
+// DHCP messages sent by client
+// In case of host being the server (Mx) with no relay in between, when packets were sent from client, giaddr will always be 0 at first,
+// because client wouldn't know. However after clients received reply from server, clients will set giaddr to server address for subsequent requests.
+// More specifically, from client to server, DISCOVER/REQUEST can only be broadcast, DECLINE/RELEASE/INFORM can only be unicast to server address.
+// From server to client, OFEER/ACK can be either and NAK can only be broadcast. For now we accept dst ip to be either for less trouble.
+// For Mx downstream is client, which give 0 giaddr.
+static dhcp_msg_check_profile_t rx_server_forward = {
+    {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
+    {DHCP_CHECK_DST_IP, (const void *)(new std::vector<const in_addr *>{&broadcast_ip, &giaddr_ip})},
+    {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&zero_ip})},
+};
+
+// forward packets going in on downlink interface, no in and out on uplink
+dhcp_check_profile_t dhcp_check_profile_server_rx = {
+    {DHCP_MESSAGE_TYPE_DISCOVER, &rx_server_forward},
+    {DHCP_MESSAGE_TYPE_OFFER, NULL},
+    {DHCP_MESSAGE_TYPE_REQUEST, &rx_server_forward},
+    {DHCP_MESSAGE_TYPE_DECLINE, &rx_server_forward},
+    {DHCP_MESSAGE_TYPE_ACK, NULL},
+    {DHCP_MESSAGE_TYPE_NAK, NULL},
+    {DHCP_MESSAGE_TYPE_RELEASE, &rx_server_forward},
+    {DHCP_MESSAGE_TYPE_INFORM, &rx_server_forward},
+};
+
+// DHCP messages sent to client
+// Server sends reply packets to client with broadcast or unicast, but we don't know the ip of the client, so we skip checking it,
+// and giaddr will be zero because there is no relay involved. The variable name is still giaddr because it was originally for relay
+// only, but the giaddr really means host ip that sends the packet.
+static dhcp_msg_check_profile_t tx_server_reply = {
+    {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
+    {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
+    {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&zero_ip})},
+};
+
+// reply packets going out on downlink interface, no in and out on uplink
+dhcp_check_profile_t dhcp_check_profile_server_tx = {
+    {DHCP_MESSAGE_TYPE_DISCOVER, NULL},
+    {DHCP_MESSAGE_TYPE_OFFER, &tx_server_reply},
+    {DHCP_MESSAGE_TYPE_REQUEST, NULL},
+    {DHCP_MESSAGE_TYPE_DECLINE, NULL},
+    {DHCP_MESSAGE_TYPE_ACK, &tx_server_reply},
+    {DHCP_MESSAGE_TYPE_NAK, &tx_server_reply},
+    {DHCP_MESSAGE_TYPE_RELEASE, NULL},
+    {DHCP_MESSAGE_TYPE_INFORM, NULL},
+};
+
+/******************************************
+ *   DHCPv6 Relay Profile (T0/M0/Mx)      *
+ ******************************************/
 
 // DHCPv6 messages sent by client
 // Solicit, Rebind, and Confirm has multicast addr as dst ip for sure, but the others might not, it could be unicast to relay address
