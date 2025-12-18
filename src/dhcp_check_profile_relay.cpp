@@ -63,6 +63,7 @@ dhcp_check_profile_t dhcp_check_profile_first_relay_rx = {
 
 // DHCP messages sent to client
 // Relay sends reply packets to client with broadcast ip, and giaddr will not be unset so it remains giaddr of the first relay.
+// When sending back to downstream client, it will be from downlink interface, so it should be giaddr.
 static dhcp_msg_check_profile_t tx_first_relay_reply = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
@@ -73,10 +74,11 @@ static dhcp_msg_check_profile_t tx_first_relay_reply = {
 // DHCP messages sent to server or relay
 // When relay receive a forward packet from client, it will set giaddr to its own address before forwarding to server.
 // For subsequent relays, packet giaddr will remain unchanged. We are the first relay (T0/M0), so giaddr must be of this relay.
-// Relay does not care if it sends to a server or a relay
+// Relay does not care if it sends to a server or a relay. It will always send out on uplink interface, and the src ip will be
+// chosen based on dst ip. It is typically Loopback0 ip but for now we can skip this check since we don't know this intf for single tor.
+// The choice of src_ip completely differs from DHCPv6 where src ip could be gua or lla of downlink vlan.
 static dhcp_msg_check_profile_t tx_first_relay_forward = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_UPLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
-    {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
     {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
 };
 
@@ -123,7 +125,7 @@ dhcp_check_profile_t dhcp_check_profile_server_rx = {
 // DHCP messages sent to client
 // Server sends reply packets to client with broadcast or unicast, but we don't know the ip of the client, so we skip checking it,
 // and giaddr will be zero because there is no relay involved. The variable name is still giaddr because it was originally for relay
-// only, but the giaddr really means host ip that sends the packet.
+// only, but the giaddr really means host ip that sends the packet. Src ip logic is explained like above.
 static dhcp_msg_check_profile_t tx_server_reply = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
