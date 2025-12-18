@@ -99,7 +99,8 @@ static bool check_dhcp_option_53(dhcp_msg_check_profile_t *profile, const dhcp_d
             case DHCP_CHECK_DST_IP:
             case DHCP_CHECK_GIADDR: {
                 std::vector<const in_addr *> *ips = (std::vector<const in_addr *> *)(*profile)[check_type];
-                const in_addr *packet_ip = check_type == DHCP_CHECK_SRC_IP ? (const in_addr *)&iphdr->saddr : check_type == DHCP_CHECK_DST_IP ? (const in_addr *)&iphdr->daddr :
+                const in_addr *packet_ip = check_type == DHCP_CHECK_SRC_IP ? (const in_addr *)&iphdr->saddr :
+                                           check_type == DHCP_CHECK_DST_IP ? (const in_addr *)&iphdr->daddr :
                                                                              (const in_addr *)(buffer + DHCP_GIADDR_OFFSET);
                 if (!contains_pointer(*ips, packet_ip)) {
                     syslog_debug(LOG_WARNING, "check_dhcp_option_53: %s ip %s not in expected %s, context interface %s, drop",
@@ -728,13 +729,13 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
 
     // perform dhcp option 53 specific sanity check against profile
     if (check_dhcp_option_53(sock_info.is_rx ? (*dhcp_check_profile_ptr_rx)[dhcp_option_53] : (*dhcp_check_profile_ptr_tx)[dhcp_option_53], context, iphdr, buffer)) {
-        syslog_debug(LOG_INFO, "packet_handler %s: option 53 value %d check passed, interface %s, context %s, src ip %s, dst ip %s",
-                     sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+        syslog_debug(LOG_INFO, "packet_handler %s: option 53 value %d %s check passed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, dhcp_option_53, get_dhcp_message_type_desc(dhcp_option_53), ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, dhcp_option_53, dup_to_context);
         return;
     } else {
-        syslog_debug(LOG_WARNING, "packet_handler %s: option 53 value %d check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
+        syslog_debug(LOG_WARNING, "packet_handler %s: option 53 value %d %s check failed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, dhcp_option_53, get_dhcp_message_type_desc(dhcp_option_53), ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_DROPPED, dup_to_context);
         return;
     }
@@ -825,13 +826,13 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 
     if (check_dhcpv6_message_type(sock_info.is_rx ? (*dhcpv6_check_profile_ptr_rx)[msg_type] : (*dhcpv6_check_profile_ptr_tx)[msg_type],
                                   context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
-        syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 message type %d check passed, interface %s, context %s, src ip %s, dst ip %s",
-                     sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
+        syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 message type %d %s check passed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, msg_type, get_dhcpv6_message_type_desc(msg_type), ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, msg_type, dup_to_context);
         return;
     } else {
-        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 message type %d check failed, interface %s, context %s, src ip %s, dst ip %s",
-                     sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 message type %d %s check failed, interface %s, context %s, src ip %s, dst ip %s",
+                     sock_info.name, msg_type, get_dhcpv6_message_type_desc(msg_type), ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_DROPPED, dup_to_context);
         return;
     }

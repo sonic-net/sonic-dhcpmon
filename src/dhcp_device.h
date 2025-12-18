@@ -40,6 +40,27 @@ typedef enum
 /* db counter name array, message type range [1, 9] */
 extern const std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT];
 
+/**
+ * @code get_dhcp_message_type_desc(t);
+ * @brief get string description of dhcp_message_type_t
+ * @param t     dhcp_message_type_t
+ * @return      string description
+ */
+inline const char* get_dhcp_message_type_desc(dhcp_message_type_t t) {
+    switch (t) {
+        case DHCP_MESSAGE_TYPE_DISCOVER: return "DHCP_MESSAGE_TYPE_DISCOVER";
+        case DHCP_MESSAGE_TYPE_OFFER: return "DHCP_MESSAGE_TYPE_OFFER";
+        case DHCP_MESSAGE_TYPE_REQUEST: return "DHCP_MESSAGE_TYPE_REQUEST";
+        case DHCP_MESSAGE_TYPE_DECLINE: return "DHCP_MESSAGE_TYPE_DECLINE";
+        case DHCP_MESSAGE_TYPE_ACK: return "DHCP_MESSAGE_TYPE_ACK";
+        case DHCP_MESSAGE_TYPE_NAK: return "DHCP_MESSAGE_TYPE_NAK";
+        case DHCP_MESSAGE_TYPE_RELEASE: return "DHCP_MESSAGE_TYPE_RELEASE";
+        case DHCP_MESSAGE_TYPE_INFORM: return "DHCP_MESSAGE_TYPE_INFORM";
+        case DHCP_MESSAGE_TYPE_BOOTP: return "DHCP_MESSAGE_TYPE_BOOTP";
+        default: return "UNKNOWN DHCP_MESSAGE_TYPE";
+    }
+}
+
 /** DHCPv6 message types */
 typedef enum
 {
@@ -64,6 +85,31 @@ typedef enum
 
 /* db counter name array, message type range [1, 13] */
 extern const std::string db_counter_name_v6[DHCPV6_MESSAGE_TYPE_COUNT];
+
+/**
+ * @code get_dhcpv6_message_type_desc(t);
+ * @brief get string description of dhcpv6_message_type_t
+ * @param t     dhcpv6_message_type_t
+ * @return      string description
+ */
+inline const char* get_dhcpv6_message_type_desc(dhcpv6_message_type_t t) {
+    switch (t) {
+        case DHCPV6_MESSAGE_TYPE_SOLICIT: return "DHCPV6_MESSAGE_TYPE_SOLICIT";
+        case DHCPV6_MESSAGE_TYPE_ADVERTISE: return "DHCPV6_MESSAGE_TYPE_ADVERTISE";
+        case DHCPV6_MESSAGE_TYPE_REQUEST: return "DHCPV6_MESSAGE_TYPE_REQUEST";
+        case DHCPV6_MESSAGE_TYPE_CONFIRM: return "DHCPV6_MESSAGE_TYPE_CONFIRM";
+        case DHCPV6_MESSAGE_TYPE_RENEW: return "DHCPV6_MESSAGE_TYPE_RENEW";
+        case DHCPV6_MESSAGE_TYPE_REBIND: return "DHCPV6_MESSAGE_TYPE_REBIND";
+        case DHCPV6_MESSAGE_TYPE_REPLY: return "DHCPV6_MESSAGE_TYPE_REPLY";
+        case DHCPV6_MESSAGE_TYPE_RELEASE: return "DHCPV6_MESSAGE_TYPE_RELEASE";
+        case DHCPV6_MESSAGE_TYPE_DECLINE: return "DHCPV6_MESSAGE_TYPE_DECLINE";
+        case DHCPV6_MESSAGE_TYPE_RECONFIGURE: return "DHCPV6_MESSAGE_TYPE_RECONFIGURE";
+        case DHCPV6_MESSAGE_TYPE_INFORMATION_REQUEST: return "DHCPV6_MESSAGE_TYPE_INFORMATION_REQUEST";
+        case DHCPV6_MESSAGE_TYPE_RELAY_FORW: return "DHCPV6_MESSAGE_TYPE_RELAY_FORW";
+        case DHCPV6_MESSAGE_TYPE_RELAY_REPL: return "DHCPV6_MESSAGE_TYPE_RELAY_REPL";
+        default: return "UNKNOWN DHCPV6_MESSAGE_TYPE";
+    }
+}
 
 /** dhcp health status */
 typedef enum
