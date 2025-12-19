@@ -539,7 +539,7 @@ void sock_mgr_stop_event_loop()
 
 void sock_mgr_update_snapshot()
 {
-    syslog(LOG_INFO, "Updating snapshot for all sockets");
+    syslog_debug(LOG_INFO, "Updating snapshot for all sockets");
 
     for (auto &[sock, info] : sock_map) {
         info.all_counters_snapshot = info.all_counters;
