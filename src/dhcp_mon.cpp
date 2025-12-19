@@ -180,7 +180,7 @@ static bool all_counters_initialized(const std::string &ifname)
  */
 static void cleanup_stale_db_counters()
 {
-    syslog(LOG_INFO, "Cleaning up stale counters in counters_db");
+    syslog_debug(LOG_INFO, "Cleaning up stale counters in counters_db");
     std::string match_pattern = construct_counter_db_table_key(downstream_ifname, false) + COUNTERS_DB_SEPARATOR "*";
     auto keys = mCountersDbPtr->keys(match_pattern);
     for (const auto &key : keys) {
@@ -191,7 +191,7 @@ static void cleanup_stale_db_counters()
         if (dhcp_devman_is_tracked_interface(ifname)) {
             continue;
         }
-        syslog(LOG_INFO, "Deleting stale counter entry for interface %s", ifname.c_str());
+        syslog_debug(LOG_INFO, "Deleting stale counter entry for interface %s", ifname.c_str());
         mCountersDbPtr->del(key);
     }
 }

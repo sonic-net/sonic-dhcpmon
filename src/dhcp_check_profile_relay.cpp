@@ -63,7 +63,8 @@ dhcp_check_profile_t dhcp_check_profile_first_relay_rx = {
 
 // DHCP messages sent to client
 // Relay sends reply packets to client with broadcast ip, and giaddr will not be unset so it remains giaddr of the first relay.
-// When sending back to downstream client, it will be from downlink interface, so it should be giaddr.
+// When sending back to downstream client, it will be from downlink interface, so src ip should be giaddr. When there are multiple
+// downlink interfaces, the src ip can be used to filter out which interface the packet is sent from.
 static dhcp_msg_check_profile_t tx_first_relay_reply = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
@@ -162,10 +163,10 @@ static dhcpv6_msg_check_profile_t rx_relay_non_relay_forward = {
 // relay forward packets sent by relay (relay to relay, receiving) should be the same as the relay forward packets sent to relay (relay to relay, sending)
 // relay relay a forward packet, whether it be relay forward or non-relay forward, to preconfigured server ip,
 // could be either the gua or lla of next relay, all we know it's definitely not going to be multicast address
-// TODO: 1. verify whether relay ip is configured to be gua or lla
+// TODO: 1. verify whether relay ip is configured to be gua or lla (confirmed its gua)
 static dhcpv6_msg_check_profile_t rx_relay_relay_forward = {
     {DHCPV6_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
-    {DHCPV6_CHECK_DST_IP, (const void *)(new std::vector<const in6_addr *>{&vlan_ipv6_gua, &vlan_ipv6_lla})},
+    {DHCPV6_CHECK_DST_IP, (const void *)(new std::vector<const in6_addr *>{&vlan_ipv6_gua})},
     {DHCPV6_CHECK_HOP_COUNT, (const void *)(new bool(true))},
     {DHCPV6_CHECK_HAS_RELAY_OPT, (const void *)(new bool(true))},
 };
@@ -241,10 +242,10 @@ static dhcpv6_msg_check_profile_t tx_relay_relay_forward = {
 //    where link_address = 0, and whether src_ip is gua or lla sock depends on whether peer_address is link local
 //    since relay reply packet (relay to relay) share the same header as the previous relay forward packet (relay to relay),
 //    we can refer to tx_relay_forward, where peer_address = ip_src (relay ip), so whether src_ip is gua or lla sock depends on whether relay ip is link local
-// TODO: 1. verify whether relay ip is configured to be gua or lla
+// TODO: 1. verify whether relay ip is configured to be gua or lla (confirmed its gua)
 static dhcpv6_msg_check_profile_t tx_relay_relay_reply = {
     {DHCPV6_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
-    {DHCPV6_CHECK_SRC_IP, (const void *)(new std::vector<const in6_addr *>{&vlan_ipv6_gua, &vlan_ipv6_lla})},
+    {DHCPV6_CHECK_SRC_IP, (const void *)(new std::vector<const in6_addr *>{&vlan_ipv6_gua})},
     {DHCPV6_CHECK_HAS_RELAY_OPT, (const void *)(new bool(true))},
 };
 

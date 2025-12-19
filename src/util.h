@@ -255,7 +255,9 @@ bool contains_pointer(const std::vector<const T*> &v, const T *ptr) {
 
 /**
  * @code                syslog_debug(priority, format, ...);
- * @brief               Log debug messages to syslog if debug_on is true
+ * @brief               Log debug messages to syslog if debug_on is true. As a general rule of thumb, if the function will be
+ *                      called indefinite amount of times (e.g., per-packet processing, timer callback), use syslog_debug
+ *                      instead of syslog directly to avoid logs piling up.
  * @param priority      Syslog priority level
  * @param format        Format string for the log message
  * @param ...           Additional arguments for the format string
