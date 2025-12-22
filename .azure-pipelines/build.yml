@@ -32,9 +32,7 @@ jobs:
   - script: |
       sudo apt-get update
       sudo apt-get install -y \
-          libboost-system-dev \
-          libboost-thread-dev \
-          libboost-serialization-dev \
+          libboost1.83-all-dev \
           libexplain-dev \
           libhiredis-dev \
           libnl-3-dev \
