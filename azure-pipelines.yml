@@ -7,6 +7,12 @@ trigger:
   branches:
     include:
       - "*"
+variables:
+  - name: BUILD_BRANCH
+    ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      value: $(System.PullRequest.TargetBranch)
+    ${{ else }}:
+      value: $(Build.SourceBranchName)
 
 jobs:
 - template: .azure-pipelines/build.yml
@@ -15,14 +21,14 @@ jobs:
     pool:
       vmImage: 'ubuntu-24.04'
     codeCoverage: false
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:latest
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:$(BUILD_BRANCH)
 - template: .azure-pipelines/build.yml
   parameters:
     arch: arm64
     pool: sonicso1ES-arm64
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-arm64:latest
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:$(BUILD_BRANCH)-arm64
 - template: .azure-pipelines/build.yml
   parameters:
     arch: armhf
     pool: sonicso1ES-armhf
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-armhf:latest
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:$(BUILD_BRANCH)-armhf
