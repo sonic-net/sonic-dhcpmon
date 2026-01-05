@@ -27,12 +27,12 @@ extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
 const std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
-    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Malformed", "Dropped"
+    "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Malformed", "Ignored"
 };
 
 const std::string db_counter_name_v6[DHCPV6_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Solicit", "Advertise", "Request", "Confirm", "Renew", "Rebind", "Reply", "Release",
-    "Decline", "Reconfigure", "Information-Request", "Relay-Forward", "Relay-Reply", "Malformed", "Dropped"
+    "Decline", "Reconfigure", "Information-Request", "Relay-Forward", "Relay-Reply", "Malformed", "Ignored"
 };
 
 const dhcp_message_type_t monitored_msgs[] = {
