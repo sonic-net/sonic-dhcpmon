@@ -3,19 +3,63 @@
  *
  *  Device (interface) manager
  */
+
 #include <assert.h>
 #include <errno.h>
 #include <string.h>
 #include <syslog.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
 
 #include "dhcp_devman.h"
 
-/** Prefix appended to Aggregation device */
-#define AGG_DEV_PREFIX  "Agg-"
 
-/** intfs map of interfaces */
-std::unordered_map<std::string, struct intf*> intfs;
+#include "dhcp_check_profile.h"  /** for setting check profile */
+#include "util.h"          /** for db counter key generation */
+#include <swss/subscriberstatetable.h>
+
+bool dual_tor_mode = false;
+
+in_addr vlan_ip = {0};
+in6_addr vlan_ipv6_gua = {0};
+in6_addr vlan_ipv6_lla = {0};
+
+in_addr loopback_ip = {0};
+in6_addr loopback_ipv6_gua = {0};
+in6_addr loopback_ipv6_lla = {0};
+
+in_addr giaddr_ip = {0};
+in_addr zero_ip = {0};
+in6_addr giaddr_ipv6_gua = {0};
+in6_addr giaddr_ipv6_lla = {0};
+in6_addr zero_ipv6 = {0};
+
+in_addr broadcast_ip = {.s_addr = INADDR_BROADCAST};
+
+const char dhcpv6_multicast_ipv6_str[] = "ff02::1:2";
+in6_addr dhcpv6_multicast_ipv6 = {0};
+
+std::string downstream_ifname;
+std::string mgmt_ifname;
+
+std::string agg_dev_all;
+std::string agg_dev_prefix;
+
+std::unordered_map<std::string, std::string> vlan_map;
+std::unordered_map<std::string, std::string> portchan_map;
+std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
+std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
+
+std::unordered_map<std::string, dhcp_device_context_t *> intfs;
+
+// dhcp check profile to use
+dhcp_check_profile_t* dhcp_check_profile_ptr_rx;
+dhcp_check_profile_t* dhcp_check_profile_ptr_tx;
+
+// dhcpv6 check profile to use
+dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_rx;
+dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_tx;
+
 /** dhcp_num_south_intf number of south interfaces */
 static uint32_t dhcp_num_south_intf = 0;
 /** dhcp_num_north_intf number of north interfaces */
@@ -23,221 +67,267 @@ static uint32_t dhcp_num_north_intf = 0;
 /** dhcp_num_mgmt_intf number of mgmt interfaces */
 static uint32_t dhcp_num_mgmt_intf = 0;
 
-/** On Device  vlan interface IP address corresponding vlan downlink IP
- *  This IP is used to filter Offer/Ack packet coming from DHCP server */
-static in_addr_t vlan_ip = 0;
+extern std::shared_ptr<swss::DBConnector> mConfigDbPtr;
+extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 
-/* Device loopback interface ip, which will be used as the giaddr in dual tor setup. */
-static in_addr_t loopback_ip = 0;
+extern bool debug_on;
 
-/* Whether the device is in dual tor mode, 0 as default for single tor mode. */
-static int dual_tor_mode = 0;
-
-/** mgmt interface */
-static struct intf *mgmt_intf = NULL;
-
-/**
- * @code dhcp_devman_get_vlan_intf();
- *
- * Accessor method
- */
-dhcp_device_context_t* dhcp_devman_get_agg_dev()
-{
-    return dhcp_device_get_aggregate_context();
-}
-
-/**
- * @code dhcp_devman_get_counter(dhcp_packet_direction_t dir);
- *
- * Accessor method
- */
-std::unordered_map<std::string, std::unordered_map<uint8_t, uint64_t>>* dhcp_devman_get_counter(dhcp_packet_direction_t dir)
-{
-    return dhcp_device_get_counter(dir);
-}
-
-/**
- * @code dhcp_devman_get_mgmt_dev();
- *
- * Accessor method
- */
-dhcp_device_context_t* dhcp_devman_get_mgmt_dev()
-{
-    return mgmt_intf ? mgmt_intf->dev_context : NULL;
-}
-
-/**
- * @code dhcp_devman_shutdown();
- *
- * shuts down device (interface) manager. Also, stops packet capture on interface and cleans up any allocated
- * memory
- */
-void dhcp_devman_shutdown()
-{
-    for (auto it = intfs.begin(); it != intfs.end();) {
-        auto inf = it->second;
-        dhcp_device_shutdown(inf->dev_context);
-        it = intfs.erase(it);
-        free(inf);
-    }
-}
-
-/**
- * @code dhcp_devman_add_intf(name, is_uplink);
- *
- * @brief adds interface to the device manager.
- */
 int dhcp_devman_add_intf(const char *name, char intf_type)
 {
     int rv = -1;
-    struct intf *dev = (struct intf*) malloc(sizeof(struct intf));
 
-    if (dev != NULL) {
-        dev->name = name;
-        dev->is_uplink = intf_type != 'd';
-
-        switch (intf_type)
-        {
-        case 'u':
-            dhcp_num_north_intf++;
-            break;
-        case 'd':
-            dhcp_num_south_intf++;
-            assert(dhcp_num_south_intf <= 1);
-            break;
-        case 'm':
-            dhcp_num_mgmt_intf++;
-            assert(dhcp_num_mgmt_intf <= 1);
-            mgmt_intf = dev;
-            break;
-        default:
-            break;
+    do {
+        switch (intf_type) {
+            case 'u':
+                dhcp_num_north_intf++;
+                break;
+            case 'd':
+                dhcp_num_south_intf++;
+                assert(dhcp_num_south_intf <= 1);
+                break;
+            case 'm':
+                dhcp_num_mgmt_intf++;
+                assert(dhcp_num_mgmt_intf <= 1);
+                break;
+            default:
+                break;
         }
 
-        rv = dhcp_device_init(&dev->dev_context, dev->name, dev->is_uplink);
-        if (rv == 0 && intf_type == 'd') {
-            rv = dhcp_device_get_ip(dev->dev_context, &vlan_ip);
-
-            dhcp_device_context_t *agg_dev = dhcp_device_get_aggregate_context();
-
-            strncpy(agg_dev->intf, AGG_DEV_PREFIX, strlen(AGG_DEV_PREFIX) + 1);
-            strncpy(agg_dev->intf + strlen(AGG_DEV_PREFIX), name, sizeof(agg_dev->intf) - strlen(AGG_DEV_PREFIX) - 1);
-            agg_dev->intf[sizeof(agg_dev->intf) - 1] = '\0';
-            syslog(LOG_INFO, "dhcpmon add aggregate interface '%s'\n", agg_dev->intf);
-            downstream_if_name = std::string(name);
+        dhcp_device_context_t *context = dhcp_device_init(name, intf_type);
+        if (context == NULL) {
+            syslog(LOG_ALERT, "Failed to initialize device context for interface %s", name);
+            break;
         }
-        std::string if_name;
-        if_name.assign(dev->name);
-        intfs[if_name] = dev;
-    }
-    else {
-        syslog(LOG_ALERT, "malloc: failed to allocate memory for intf '%s'\n", name);
-    }
+        // we expect to have exactly 1 downstream interface and we need to know it's ip
+        if (intf_type == 'd') {
+            downstream_ifname = name;
+            syslog(LOG_INFO, "Set downstream_ifname to %s", name);
+            dhcp_device_get_ip(context, &vlan_ip, &vlan_ipv6_gua, &vlan_ipv6_lla);    
+            syslog(LOG_INFO, "Set vlan_ip to %s", 
+                   generate_addr_string((const uint8_t *)&vlan_ip, sizeof(vlan_ip)).c_str());
+            syslog(LOG_INFO, "Set vlan_ipv6_gua to %s", 
+                   generate_addr_string((const uint8_t *)&vlan_ipv6_gua, sizeof(vlan_ipv6_gua)).c_str());
+            syslog(LOG_INFO, "Set vlan_ipv6_lla to %s", 
+                   generate_addr_string((const uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str());
+        }
+        // we also expect exactly 1 mgmt interface and it's a physical interface
+        if (intf_type == 'm') {
+            mgmt_ifname = name;
+            syslog(LOG_INFO, "Set mgmt_ifname to %s", name);
+        }
+
+        intfs[name] = context;
+        syslog(LOG_INFO, "Add interface %s of type %c to intfs", name, intf_type);
+
+        rv = 0;
+    } while (0);
 
     return rv;
 }
 
-/**
- * @code dhcp_devman_setup_dual_tor_mode(name);
- *
- * @brief set up dual tor mode: 1) set dual_tor_mode flag and 2) retrieve loopback_ip.
- */
 int dhcp_devman_setup_dual_tor_mode(const char *name)
 {
     int rv = -1;
 
-    dhcp_device_context_t loopback_intf_context;
+    do {
+        // for dual tor, loopback interface kind of replace the role of downstream interface
 
-    if (strlen(name) < sizeof(loopback_intf_context.intf)) {
-        strncpy(loopback_intf_context.intf, name, sizeof(loopback_intf_context.intf) - 1);
-        loopback_intf_context.intf[sizeof(loopback_intf_context.intf) - 1] = '\0';
-    } else {
-        syslog(LOG_ALERT, "loopback interface name (%s) is too long", name);
-        return rv;
-    }
-
-    if (initialize_intf_mac_and_ip_addr(&loopback_intf_context) == 0 &&
-        dhcp_device_get_ip(&loopback_intf_context, &loopback_ip) == 0) {
-            dual_tor_mode = 1;
-    } else {
-        syslog(LOG_ALERT, "failed to retrieve ip addr for loopback interface (%s)", name);
-        return rv;
-    }
-
-    rv = 0;
-    return rv;
-}
-
-/**
- * @code dhcp_devman_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr);
- *
- * @brief start packet capture on the devman interface list
- *
- * @param snaplen          packet capture snap length
- * @param rx_event_mgr     event mgr for rx packet
- * @param tx_event_mgr     event mgr for tx packet
- *
- * @return 0 on success, nonzero otherwise
- */
-int dhcp_devman_start_capture(size_t snaplen, struct event_mgr *rx_event_mgr, struct event_mgr *tx_event_mgr)
-{
-    int rv = -1;
-
-    if ((dhcp_num_south_intf == 1) && (dhcp_num_north_intf >= 1)) {
-        rv = dhcp_device_start_capture(snaplen, rx_event_mgr, tx_event_mgr, dual_tor_mode ? loopback_ip : vlan_ip);
-        if (rv != 0) {
-            syslog(LOG_ALERT, "Capturing DHCP packets on interface failed");
-            exit(1);
+        dhcp_device_context_t loopback_context;
+        if (strlen(name) >= sizeof(loopback_context.intf)) {
+            syslog(LOG_ALERT, "Loopback interface name (%s) is too long", name);
+            break;
         }
-    }
-    else {
-        syslog(LOG_ERR, "Invalid number of interfaces, downlink/south %d, uplink/north %d\n",
-               dhcp_num_south_intf, dhcp_num_north_intf);
-    }
+
+        strncpy(loopback_context.intf, name, sizeof(loopback_context.intf) - 1);
+        loopback_context.intf[sizeof(loopback_context.intf) - 1] = '\0';
+        syslog(LOG_INFO, "Retrieving ip addr for loopback interface (%s)", name);
+
+        if (initialize_intf_mac_and_ip_addr(&loopback_context) < 0) {
+            syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", name);
+            break;
+        }
+
+        dhcp_device_get_ip(&loopback_context, &loopback_ip, &loopback_ipv6_gua, &loopback_ipv6_lla);
+        syslog(LOG_INFO, "Set loopback_ip to %s", 
+               generate_addr_string((const uint8_t *)&loopback_ip, sizeof(loopback_ip)).c_str());
+        syslog(LOG_INFO, "Set loopback_ipv6_gua to %s", 
+               generate_addr_string((const uint8_t *)&loopback_ipv6_gua, sizeof(loopback_ipv6_gua)).c_str());
+        syslog(LOG_INFO, "Set loopback_ipv6_lla to %s", 
+               generate_addr_string((const uint8_t *)&loopback_ipv6_lla, sizeof(loopback_ipv6_lla)).c_str());
+        dual_tor_mode = true;
+        syslog(LOG_INFO, "Set dual_tor_mode to true");
+
+        rv = 0;
+    } while (0);
 
     return rv;
 }
 
-/**
- * @code dhcp_devman_get_status(check_type, context);
- *
- * @brief collects DHCP relay status info.
- */
-dhcp_mon_status_t dhcp_devman_get_status(dhcp_mon_check_t check_type, dhcp_device_context_t *context)
+bool dhcp_devman_is_tracked_interface(const std::string &ifname)
 {
-    return dhcp_device_get_status(check_type, context);
+    auto itr = intfs.find(ifname);
+    if (itr != intfs.end()) {
+        return true;
+    }
+    auto vlan_itr = vlan_map.find(ifname);
+    if (vlan_itr != vlan_map.end()) {
+        return true;
+    }
+    auto portchan_itr = portchan_map.find(ifname);
+    if (portchan_itr != portchan_map.end()) {
+        return true;
+    }
+    if (ifname == mgmt_ifname) {
+        return true;
+    }
+    return false;
 }
 
 /**
- * @code dhcp_devman_update_snapshot(context);
- *
- * @brief Update device/interface counters snapshot
+ * @code              update_vlan_mapping();
+ * @brief             Update ethernet interface to vlan map, counter initilization is done later with info collected here
+ *                    sample VLAN_MEMBER entry: VLAN_MEMBER|Vlan1000|Ethernet48
+ * @param             none
+ * @return            none
  */
-void dhcp_devman_update_snapshot(dhcp_device_context_t *context)
+static void update_vlan_mapping()
 {
-    if (context == NULL) {
-        for (auto &itr : intfs) {
-            dhcp_device_update_snapshot(itr.second->dev_context);
+    syslog(LOG_INFO, "Updating vlan mapping from VLAN_MEMBER");
+    auto match_pattern = std::string("VLAN_MEMBER|*");
+    auto keys = mConfigDbPtr->keys(match_pattern);
+    std::string all_ifname;
+    std::string all_skipped_ifname;
+    for (const auto &key : keys) {
+        auto first = key.find_first_of('|');
+        auto second = key.find_last_of('|');
+        auto vlan = key.substr(first + 1, second - first - 1);
+        auto ifname = key.substr(second + 1);
+        if (intfs.find(vlan) == intfs.end()) {
+            all_skipped_ifname += "<" + ifname + ", " + vlan + ">, ";
+            continue;
         }
-        dhcp_device_update_snapshot(dhcp_devman_get_agg_dev());
-    } else {
-        dhcp_device_update_snapshot(context);
+        vlan_map[ifname] = vlan;
+        rev_vlan_map[vlan].insert(ifname);
+        all_ifname += "<" + ifname + ", " + vlan + ">, ";
+    }
+    syslog(LOG_INFO, "Added vlan member interface mappings: %s", all_ifname.c_str());
+    syslog(LOG_INFO, "Skipped vlan member interface mappings: %s", all_skipped_ifname.c_str());
+}
+
+/**
+ * @code              update_portchannel_mapping();
+ * @brief             Update ethernet interface to port-channel map, counter initialization is done later with info collected here
+ *                    sample PORTCHANNEL_MEMBER entry: PORTCHANNEL_MEMBER|PortChannel101|Ethernet112
+ * @param             none
+ * @return            none
+ */
+static void update_portchannel_mapping()
+{
+    syslog(LOG_INFO, "Updating port-channel mapping from PORTCHANNEL_MEMBER");
+    auto match_pattern = std::string("PORTCHANNEL_MEMBER|*");
+    auto keys = mConfigDbPtr->keys(match_pattern);
+    std::string all_ifname;
+    std::string all_skipped_ifname;
+    for (const auto &key : keys) {
+        auto first = key.find_first_of('|');
+        auto second = key.find_last_of('|');
+        auto portchannel = key.substr(first + 1, second - first - 1);
+        auto ifname = key.substr(second + 1);
+        if (intfs.find(portchannel) == intfs.end()) {
+            all_skipped_ifname += "<" + ifname + ", " + portchannel + ">, ";
+            continue;
+        }
+        portchan_map[ifname] = portchannel;
+        rev_portchan_map[portchannel].insert(ifname);
+        all_ifname += "<" + ifname + ", " + portchannel + ">, ";
+    }
+    syslog(LOG_INFO, "Added port-channel member interface mappings: %s", all_ifname.c_str());
+    syslog(LOG_INFO, "Skipped port-channel member interface mappings: %s", all_skipped_ifname.c_str());
+}
+
+int dhcp_devman_init()
+{
+    syslog(LOG_INFO, "Initializing dhcp device manager");
+
+    // we expect exactly 1 downstream intf and at least 1 upstream intf
+    if (dhcp_num_south_intf != 1) {
+        syslog(LOG_ALERT, "Invalid number of interfaces, downlink/south %d, expect 1", dhcp_num_south_intf);
+        return -1;
+    }
+    if (dhcp_num_north_intf == 0) {
+        syslog(LOG_ALERT, "Invalid number of interfaces, uplink/north %d, expect more than 0", dhcp_num_north_intf);
+        return -1;
+    }
+
+    giaddr_ip = dual_tor_mode ? loopback_ip : vlan_ip;
+    giaddr_ipv6_gua = dual_tor_mode ? loopback_ipv6_gua : vlan_ipv6_gua;
+    giaddr_ipv6_lla = dual_tor_mode ? loopback_ipv6_lla : vlan_ipv6_lla;
+    inet_pton(AF_INET6, dhcpv6_multicast_ipv6_str, &dhcpv6_multicast_ipv6);
+    syslog(LOG_INFO, "Set giaddr_ip to %s", generate_addr_string((const uint8_t *)&giaddr_ip, sizeof(in_addr)).c_str());
+    syslog(LOG_INFO, "Set giaddr_ipv6_gua to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_gua, sizeof(in6_addr)).c_str());
+    syslog(LOG_INFO, "Set giaddr_ipv6_lla to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_lla, sizeof(in6_addr)).c_str());
+    syslog(LOG_INFO, "Set dhcpv6_multicast_ipv6 to %s", generate_addr_string((const uint8_t *)&dhcpv6_multicast_ipv6, sizeof(in6_addr)).c_str());
+
+    // set dhcp check profile pointers to first relay (T0/M0)
+    dhcp_check_profile_ptr_rx = &dhcp_check_profile_first_relay_rx;
+    dhcp_check_profile_ptr_tx = &dhcp_check_profile_first_relay_tx;
+    syslog(LOG_INFO, "Set dhcp_check_profile to be first relay profiles");
+
+    // set dhcpv6 check profile pointers to relay (T0/M0/Mx)
+    dhcpv6_check_profile_ptr_rx = &dhcpv6_check_profile_relay_rx;
+    dhcpv6_check_profile_ptr_tx = &dhcpv6_check_profile_relay_tx;
+    syslog(LOG_INFO, "Set dhcpv6_check_profile to be relay profiles");
+
+    agg_dev_all = "Agg-" + downstream_ifname;
+    agg_dev_prefix = agg_dev_all + "-";
+
+    // vlan and its members, portchannel and its members are initialized regardless of whether they are in cmdline
+    update_vlan_mapping();
+    update_portchannel_mapping();
+
+    syslog(LOG_INFO, "Dhcp device manager initialized successfully");
+
+    return 0;
+}
+
+void dhcp_devman_free()
+{
+    vlan_map.clear();
+    portchan_map.clear();
+    for (const auto &[ifname, context] : intfs) {
+        dhcp_device_free(context);
+    }
+    intfs.clear();
+}
+
+const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &ifname)
+{
+    const auto iter = intfs.find(ifname);
+    if (iter != intfs.end()) {
+        return iter->second;
+    }
+    const auto vlan = vlan_map.find(ifname);
+    if (vlan != vlan_map.end() && ifname != vlan->second) {
+        return dhcp_devman_get_device_context(vlan->second);
+    }
+    const auto port_channel = portchan_map.find(ifname);
+    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
+        return dhcp_devman_get_device_context(port_channel->second);
+    }
+    return NULL;
+}
+
+void dhcp_devman_print_all_status(dhcp_counters_type_t type)
+{
+    dhcp_device_print_status(agg_dev_all, type);
+    for (const auto &[ifname, context] : intfs) {
+        dhcp_device_print_status(ifname, type);
     }
 }
 
-/**
- * @code dhcp_devman_print_status(context, type);
- *
- * @brief prints status counters to syslog, if context is null, it prints status counters for all interfaces
- */
-void dhcp_devman_print_status(dhcp_device_context_t *context, dhcp_counters_type_t type)
+void dhcp_devman_print_all_status_debug(dhcp_counters_type_t type)
 {
-    if (context == NULL) {
-        for (auto &itr : intfs) {
-            dhcp_device_print_status(itr.second->dev_context, type);
-        }
-        dhcp_device_print_status(dhcp_devman_get_agg_dev(), type);
-    } else {
-        dhcp_device_print_status(context, type);
+    if (debug_on) {
+        dhcp_devman_print_all_status(type);
     }
 }
