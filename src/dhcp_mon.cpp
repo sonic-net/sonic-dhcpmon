@@ -11,6 +11,7 @@
 #include <sys/syscall.h>
 #include <assert.h>
 #include <chrono>
+#include <algorithm>
 
 #include "dhcp_mon.h"
 #include "dhcp_devman.h"
