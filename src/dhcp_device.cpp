@@ -311,6 +311,36 @@ static void dhcp_print_counters(const std::string &ifname, dhcp_counters_type_t 
     );
 }
 
+/**
+ * @code dhcp_print_counters_v6(ifname, type, rx_counter, tx_counter);
+ *
+ * @brief prints status counters to syslog for DHCPv6.
+ *
+ * @param ifname           interface name
+ * @param type             counter type
+ * @param rx_counter       rx counter
+ * @param tx_counter       tx counter
+ *
+ * @return none
+ */
+static void dhcp_print_counters_v6(const std::string &ifname, dhcp_counters_type_t type, const counter_t &rx_counter, const counter_t &tx_counter)
+{
+    syslog(
+        LOG_INFO,
+        "[%*s -%*s rx/tx] Solicit: %*" PRIu64 "/%*" PRIu64 ", Advertise: %*" PRIu64 "/%*" PRIu64
+        ", Request: %*" PRIu64 "/%*" PRIu64 ", Reply: %*" PRIu64 "/%*" PRIu64,
+        IF_NAMESIZE, ifname.c_str(), 13, counter_desc[type],
+        DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_SOLICIT),
+        DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_SOLICIT),
+        DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_ADVERTISE),
+        DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_ADVERTISE),
+        DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_REQUEST),
+        DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_REQUEST),
+        DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_REPLY),
+        DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_REPLY)
+    );
+}
+
 void dhcp_device_print_status(const std::string &ifname, dhcp_counters_type_t type)
 {
     switch (type) {
@@ -321,10 +351,10 @@ void dhcp_device_print_status(const std::string &ifname, dhcp_counters_type_t ty
             dhcp_print_counters(ifname, type, sock_mgr_get_sock_info(rx_sock).all_counters_snapshot[ifname], sock_mgr_get_sock_info(tx_sock).all_counters_snapshot[ifname]);
             break;
         case DHCP_COUNTERS_CURRENT_V6:
-            dhcp_print_counters(ifname, type, sock_mgr_get_sock_info(rx_sock_v6).all_counters[ifname], sock_mgr_get_sock_info(tx_sock_v6).all_counters[ifname]);
+            dhcp_print_counters_v6(ifname, type, sock_mgr_get_sock_info(rx_sock_v6).all_counters[ifname], sock_mgr_get_sock_info(tx_sock_v6).all_counters[ifname]);
             break;
         case DHCP_COUNTERS_SNAPSHOT_V6:
-            dhcp_print_counters(ifname, type, sock_mgr_get_sock_info(rx_sock_v6).all_counters_snapshot[ifname], sock_mgr_get_sock_info(tx_sock_v6).all_counters_snapshot[ifname]);
+            dhcp_print_counters_v6(ifname, type, sock_mgr_get_sock_info(rx_sock_v6).all_counters_snapshot[ifname], sock_mgr_get_sock_info(tx_sock_v6).all_counters_snapshot[ifname]);
             break;
         default:
             syslog(LOG_WARNING, "Unsupported counter type %d for interface %s", type, ifname.c_str());
