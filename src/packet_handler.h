@@ -59,6 +59,8 @@ enum
     OPTION_DHCPV6_INTERFACE_ID = 18,
 };
 
+// max valid DHCPv6 option code, based on IANA assignments
+// ref: https://www.iana.org/assignments/dhcpv6-parameters/dhcpv6-parameters.xhtml
 #define DHCPV6_OPTION_CODE_MAX 150
 
 /**
