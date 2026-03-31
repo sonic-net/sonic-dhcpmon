@@ -142,7 +142,8 @@ static const uint8_t* find_dhcpv6_option(uint16_t option_code, const uint8_t *dh
     ssize_t offset = 0;
     uint16_t code, len;
 
-    while (offset + 1 < dhcp6_options_sz) {
+    // each dhcpv6 option has 4 byte header (2 type + 2 length), need at least 4 bytes to parse
+    while (offset + 3 < dhcp6_options_sz) {
         code = ntohs(*(uint16_t *)(dhcp6_options + offset));
         len = ntohs(*(uint16_t *)(dhcp6_options + offset + 2));
         if (code == option_code) {
@@ -576,6 +577,7 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
     ssize_t offset = 0;
     uint16_t code, len;
 
+    // need at least 2 bytes to read option type code
     while (offset + 1 < dhcp6_options_sz) {
         code = ntohs(*(uint16_t *)(dhcp6_options + offset));
         if (code > DHCPV6_OPTION_CODE_MAX) {
@@ -583,11 +585,13 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
             return false;
         }
         syslog_debug(LOG_INFO, "dhcpv6_sanity_check: dhcpv6 option code %d in dhcp packet, interface %s", code, ifname.c_str());
+        // need 2 more bytes to read option length
         if (offset + 3 >= dhcp6_options_sz) {
             syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: dhcpv6 options has code but no len, interface %s", ifname.c_str());
             return false;
         }
         len = ntohs(*(uint16_t *)(dhcp6_options + offset + 2));
+        // need len more bytes for option value
         if (offset + 4 + len > dhcp6_options_sz) {
             syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: dhcp options has no space for value, interface %s", ifname.c_str());
             return false;
