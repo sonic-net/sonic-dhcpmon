@@ -864,6 +864,8 @@ void callback_common(int fd, short event, void *arg)
         syslog_debug(LOG_INFO, "callback_common: received packet on interface index %d, mapped to interface %s, mapped to context interface %s",
                      sll.sll_ifindex, ifname_buf, context ? context->intf : "NULL");
         if (context != NULL) {
+            // suppress debug logging for duplicate/mgmt packets to reduce log noise
+            // safe without RAII: packet handlers don't throw, and next iteration resets debug_mask
             debug_mask = (ifname == context->intf) && (ifname != mgmt_ifname);
             ((packet_handler_t)sock_info.packet_handler)(fd, ifname, context, buffer_sz);
             debug_mask = true;
