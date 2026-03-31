@@ -80,6 +80,8 @@ static const char *counter_desc[DHCP_COUNTERS_COUNT] = {
  * @param monitored_msg_cnt number of monitored message types
  * @return                  true if there are received messages not transmitted out, false otherwise
  */
+// these helpers use const int * to accept both dhcp_message_type_t and dhcpv6_message_type_t arrays
+// without duplicating the function for each enum type; safe on GCC/Linux where unscoped enums use int
 static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock, int tx_sock, const int *monitored_msgs, size_t monitored_msg_cnt)
 {
     const sock_info_t &rx_sock_info = sock_mgr_get_sock_info(rx_sock);
