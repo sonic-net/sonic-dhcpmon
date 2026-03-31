@@ -517,6 +517,9 @@ static struct udphdr* ipv6_sanity_check(const std::string &ifname, const uint8_t
             syslog_debug(LOG_WARNING, "ipv6_sanity_check: received ipv6 packet with no udp header, interface %s", ifname.c_str());
             return NULL;
         }
+        // nxt_hdr[0] == IPPROTO_UDP means nxt_hdr points at the last extension header
+        // whose next-header field indicates UDP follows; advance past this extension
+        // header using the standard length formula to reach the actual UDP header
         nxt_hdr += (nxt_hdr[1] + 1) * 8;
     }
     syslog_debug(LOG_INFO, "ipv6_sanity_check: found udp header in ipv6 packet, interface %s", ifname.c_str());
