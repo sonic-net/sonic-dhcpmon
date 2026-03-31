@@ -24,7 +24,7 @@
 #include "dhcp_devman.h"
 
 /******************************************
- *   DHCP First Relay Profile (T0/M0)     *
+ *   DHCP Relay First Hop Profile (T0/M0) *
  ******************************************/
 
 // DHCP messages sent by client
@@ -145,9 +145,9 @@ dhcp_check_profile_t dhcp_check_profile_server_tx = {
     {DHCP_MESSAGE_TYPE_INFORM, NULL},
 };
 
-/******************************************
- *   DHCPv6 Relay Profile (T0/M0/Mx)      *
- ******************************************/
+/********************************************************
+ *   DHCPv6 Relay Any Hop Profile (T0/M0/Mx and more)   *
+ ********************************************************/
 
 // DHCPv6 messages sent by client
 // Solicit, Rebind, and Confirm has multicast addr as dst ip for sure, but the others might not, it could be unicast to relay address
