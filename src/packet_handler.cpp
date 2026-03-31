@@ -614,6 +614,15 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
         offset += 4 + len;
     }
 
+    // relay-forward and relay-reply must contain a relay message option
+    uint8_t msg_type = *dhcp6hdr;
+    if (msg_type >= DHCPV6_MESSAGE_TYPE_RELAY_FORW) {
+        if (find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz) == NULL) {
+            syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: relay message (type %d) missing relay-msg option, interface %s", msg_type, ifname.c_str());
+            return false;
+        }
+    }
+
     return true;
 }
 
