@@ -122,25 +122,24 @@ static void initialize_db_counters(const std::string &ifname)
 static bool db_counters_initialized(const std::string &ifname)
 {
     std::string table_name;
-    std::string *field;
 
     table_name = construct_counter_db_table_key(ifname, false);
-    field = mCountersDbPtr->hget(table_name, "RX").get();
-    if (field == NULL || field->empty()) {
+    auto rx_v4 = mCountersDbPtr->hget(table_name, "RX");
+    if (rx_v4 == nullptr || rx_v4->empty()) {
         return false;
     }
-    field = mCountersDbPtr->hget(table_name, "TX").get();
-    if (field == NULL || field->empty()) {
+    auto tx_v4 = mCountersDbPtr->hget(table_name, "TX");
+    if (tx_v4 == nullptr || tx_v4->empty()) {
         return false;
     }
 
     table_name = construct_counter_db_table_key(ifname, true);
-    field = mCountersDbPtr->hget(table_name, "RX").get();
-    if (field == NULL || field->empty()) {
+    auto rx_v6 = mCountersDbPtr->hget(table_name, "RX");
+    if (rx_v6 == nullptr || rx_v6->empty()) {
         return false;
     }
-    field = mCountersDbPtr->hget(table_name, "TX").get();
-    if (field == NULL || field->empty()) {
+    auto tx_v6 = mCountersDbPtr->hget(table_name, "TX");
+    if (tx_v6 == nullptr || tx_v6->empty()) {
         return false;
     }
 
@@ -298,8 +297,9 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
         counter_t &counter = itr->second;
 
         // read and parse db counter json string
+        // counter_json is shared_ptr<string>, keeps the string alive while we modify and parse it
         auto counter_json = mCountersDbPtr->hget(key, sock_info.is_rx ? "RX" : "TX");
-        std::replace(counter_json.get()->begin(), counter_json.get()->end(),'\'', '\"');
+        std::replace(counter_json->begin(), counter_json->end(),'\'', '\"');
         Json::Value root;
         bool parse_success = parse_json_str(counter_json.get(), &root);
 
