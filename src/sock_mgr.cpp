@@ -510,6 +510,7 @@ void sock_mgr_start_event_loop()
 {
     syslog(LOG_INFO, "Starting event loop for all sockets");
 
+    // sock_map must not be modified after this point, threads capture references to map values
     for (auto &[sock, info] : sock_map) {
         info.event_thread = std::thread([&info]() {
         if (event_base_dispatch(info.event_mgr_ptr->get_base()) < 0) {
