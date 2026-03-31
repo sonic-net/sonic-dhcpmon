@@ -579,6 +579,9 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
 {
     ssize_t offset = 0;
     uint16_t code, len;
+    uint8_t msg_type = *dhcp6hdr;
+    bool is_relay = (msg_type == DHCPV6_MESSAGE_TYPE_RELAY_FORW || msg_type == DHCPV6_MESSAGE_TYPE_RELAY_REPL);
+    bool found_relay_msg = false;
 
     // need at least 2 bytes to read option type code
     while (offset + 1 < dhcp6_options_sz) {
@@ -601,6 +604,7 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
         }
         syslog_debug(LOG_INFO, "dhcpv6_sanity_check: dhcpv6 option code %d has length %d, interface %s", code, len, ifname.c_str());
         if (code == OPTION_DHCPV6_RELAY_MSG) {
+            found_relay_msg = true;
             syslog_debug(LOG_INFO, "dhcpv6_sanity_check: dhcpv6 option code %d is a relay message, interface %s", code, ifname.c_str());
             const uint8_t *inner_dhcp6hdr = dhcp6_options + offset + 4;
             uint8_t inner_msg_type = *inner_dhcp6hdr;
@@ -613,6 +617,14 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
         }
         offset += 4 + len;
     }
+
+    // relay packets must contain relay-msg option, non-relay packets must not
+    if (is_relay != found_relay_msg) {
+        syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: message type %d relay-msg option mismatch (expected %s, found %s), interface %s",
+                     msg_type, is_relay ? "present" : "absent", found_relay_msg ? "present" : "absent", ifname.c_str());
+        return false;
+    }
+    syslog_debug(LOG_INFO, "dhcpv6_sanity_check: message type %d relay-msg option check passed, interface %s", msg_type, ifname.c_str());
 
     return true;
 }
