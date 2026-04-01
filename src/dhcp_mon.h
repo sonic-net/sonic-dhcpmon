@@ -1,60 +1,50 @@
 /**
  * @file dhcp_mon.h
  *
- *  @brief dhcp relay monitor module
- *
+ * dhcp monitor module, which implements the main structure and threads of the program
+ * besides the dhcp_mon_* functions, it also hosts database accesses and event loop management.
+ * Functions are noop on failure.
  */
 
 #ifndef DHCP_MON_H_
 #define DHCP_MON_H_
 
-#include <mutex>
-#include "util.h"
+/** dhcpmon debug mode control flag, mostly used for logging for more frequent operations */
+extern bool debug_on;
+
+ /**
+  * @code dhcp_mon_init(snaplen, window_sec, max_count, dbu_update_interval);
+  * 
+  * @brief initializes event base and periodic timer event that continuously collects dhcp relay health status every
+  *        window_sec seconds. It also writes to syslog when dhcp relay has been unhealthy for consecutive max_count
+  *        checks.
+  * @param snaplen             snaplen for packet capture
+  * @param window_sec          time interval between health checks
+  * @param max_count           max count of consecutive unhealthy statuses before reporting to syslog
+  * @param db_update_interval  time interval of updating COUNTERS_DB
+  * @return 0 upon success, negative upon failure
+  */
+int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_interval);
 
 /**
- * @code dhcp_mon_init(window_ssec, max_count, db_update_interval);
+ * @code dhcp_mon_free();
  *
- * @brief initializes event base and periodic timer event that continuously collects dhcp relay health status every
- *        window_sec seconds. It also writes to syslog when dhcp relay has been unhealthy for consecutive max_count
- *        checks.
- *
- * @param window_sec time interval between health checks
- * @param max_count max count of consecutive unhealthy statuses before reporting to syslog
- * @param db_update_interval time interval of updating COUNTERS_DB
- *
- * @return 0 upon success, otherwise upon failure
- */
-int dhcp_mon_init(int window_sec, int max_count, int db_update_interval);
-
-/**
- * @code dhcp_mon_shutdown();
- *
- * @brief shuts down libevent loop
+ * @brief frees resources used by dhcp monitor
  *
  * @return none
  */
-void dhcp_mon_shutdown();
+void dhcp_mon_free();
 
 /**
- * @code dhcp_mon_start(snaplen, debug);
+ * @code dhcp_mon_start(debug);
  *
  * @brief start monitoring DHCP Relay
  *
- * @param snaplen       packet capture length
- * @param debug         turn on debug or not
+ * @param none
  *
- * @return 0 upon success, otherwise upon failure
+ * @return 0 upon success, negative upon failure
  */
-int dhcp_mon_start(size_t snaplen, bool debug);
-
-/**
- * @code free_event_mgr(struct event_mgr *mgr);
- *
- * @brief Free event manager
- * 
- * @param mgr pointer to event manager
- */
-void free_event_mgr(struct event_mgr *mgr);
+int dhcp_mon_start();
 
 /**
  * @code dhcp_mon_stop();

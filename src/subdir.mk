@@ -2,6 +2,10 @@
 CC := g++
 
 C_SRCS += \
+../src/dhcp_check_profile_relay.cpp \
+../src/health_check.cpp \
+../src/packet_handler.cpp \
+../src/sock_mgr.cpp \
 ../src/event_mgr.cpp \
 ../src/dhcp_device.cpp \
 ../src/dhcp_devman.cpp \
@@ -10,6 +14,10 @@ C_SRCS += \
 ../src/main.cpp 
 
 OBJS += \
+./src/dhcp_check_profile_relay.o \
+./src/health_check.o \
+./src/packet_handler.o \
+./src/sock_mgr.o \
 ./src/event_mgr.o \
 ./src/dhcp_device.o \
 ./src/dhcp_devman.o \
@@ -18,6 +26,10 @@ OBJS += \
 ./src/main.o 
 
 C_DEPS += \
+./src/dhcp_check_profile_relay.d \
+./src/health_check.d \
+./src/packet_handler.d \
+./src/sock_mgr.d \
 ./src/event_mgr.d \
 ./src/dhcp_device.d \
 ./src/dhcp_devman.d \
