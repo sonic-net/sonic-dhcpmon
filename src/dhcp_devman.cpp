@@ -268,15 +268,29 @@ int dhcp_devman_init()
     syslog(LOG_INFO, "Set giaddr_ipv6_lla to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_lla, sizeof(in6_addr)).c_str());
     syslog(LOG_INFO, "Set dhcpv6_multicast_ipv6 to %s", generate_addr_string((const uint8_t *)&dhcpv6_multicast_ipv6, sizeof(in6_addr)).c_str());
 
-    // set dhcp check profile pointers to first relay (T0/M0)
-    dhcp_check_profile_ptr_rx = &dhcp_check_profile_first_relay_rx;
-    dhcp_check_profile_ptr_tx = &dhcp_check_profile_first_relay_tx;
-    syslog(LOG_INFO, "Set dhcp_check_profile to be first relay profiles");
+    // read device type from CONFIG_DB
+    auto device_type_ptr = mConfigDbPtr->hget("DEVICE_METADATA|localhost", "type");
+    std::string device_type = (device_type_ptr != NULL) ? *device_type_ptr : "";
+    if (device_type.find("ToRRouter") == std::string::npos) {
+        syslog(LOG_ALERT, "Unsupported device type '%s' (must contain 'ToRRouter')", device_type.c_str());
+        return -1;
+    }
+
+    // select v4 check profile
+    if (device_type == "BmcMgmtToRRouter") {
+        dhcp_check_profile_ptr_rx = &dhcp_check_profile_server_rx;
+        dhcp_check_profile_ptr_tx = &dhcp_check_profile_server_tx;
+        syslog(LOG_INFO, "Set dhcp_check_profile to server profiles (device type: %s)", device_type.c_str());
+    } else {
+        dhcp_check_profile_ptr_rx = &dhcp_check_profile_first_relay_rx;
+        dhcp_check_profile_ptr_tx = &dhcp_check_profile_first_relay_tx;
+        syslog(LOG_INFO, "Set dhcp_check_profile to first relay profiles (device type: %s)", device_type.c_str());
+    }
 
     // set dhcpv6 check profile pointers to relay (T0/M0/Mx)
     dhcpv6_check_profile_ptr_rx = &dhcpv6_check_profile_relay_rx;
     dhcpv6_check_profile_ptr_tx = &dhcpv6_check_profile_relay_tx;
-    syslog(LOG_INFO, "Set dhcpv6_check_profile to be relay profiles");
+    syslog(LOG_INFO, "Set dhcpv6_check_profile to relay profiles");
 
     agg_dev_all = "Agg-" + downstream_ifname;
     agg_dev_prefix = agg_dev_all + "-";
