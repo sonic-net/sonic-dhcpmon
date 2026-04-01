@@ -268,15 +268,23 @@ int dhcp_devman_init()
     syslog(LOG_INFO, "Set giaddr_ipv6_lla to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_lla, sizeof(in6_addr)).c_str());
     syslog(LOG_INFO, "Set dhcpv6_multicast_ipv6 to %s", generate_addr_string((const uint8_t *)&dhcpv6_multicast_ipv6, sizeof(in6_addr)).c_str());
 
-    // set dhcp check profile pointers to first relay (T0/M0)
-    dhcp_check_profile_ptr_rx = &dhcp_check_profile_first_relay_rx;
-    dhcp_check_profile_ptr_tx = &dhcp_check_profile_first_relay_tx;
-    syslog(LOG_INFO, "Set dhcp_check_profile to be first relay profiles");
+    // select v4 check profile based on FEATURE|dhcp_server state in CONFIG_DB
+    auto dhcp_server_state_ptr = mConfigDbPtr->hget("FEATURE|dhcp_server", "state");
+    std::string dhcp_server_state = (dhcp_server_state_ptr != NULL) ? *dhcp_server_state_ptr : "";
+    if (dhcp_server_state == "enabled") {
+        dhcp_check_profile_ptr_rx = &dhcp_check_profile_server_rx;
+        dhcp_check_profile_ptr_tx = &dhcp_check_profile_server_tx;
+        syslog(LOG_INFO, "Set dhcp_check_profile to server profiles (FEATURE|dhcp_server state: enabled)");
+    } else {
+        dhcp_check_profile_ptr_rx = &dhcp_check_profile_first_relay_rx;
+        dhcp_check_profile_ptr_tx = &dhcp_check_profile_first_relay_tx;
+        syslog(LOG_INFO, "Set dhcp_check_profile to first relay profiles (FEATURE|dhcp_server state: %s)", dhcp_server_state.c_str());
+    }
 
-    // set dhcpv6 check profile pointers to relay (T0/M0/Mx)
+    // v6 always uses relay profile (dhcpmon only runs inside dhcp_relay container)
     dhcpv6_check_profile_ptr_rx = &dhcpv6_check_profile_relay_rx;
     dhcpv6_check_profile_ptr_tx = &dhcpv6_check_profile_relay_tx;
-    syslog(LOG_INFO, "Set dhcpv6_check_profile to be relay profiles");
+    syslog(LOG_INFO, "Set dhcpv6_check_profile to relay profiles");
 
     agg_dev_all = "Agg-" + downstream_ifname;
     agg_dev_prefix = agg_dev_all + "-";
