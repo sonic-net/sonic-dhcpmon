@@ -42,6 +42,6 @@ C_DEPS += \
 src/%.o: src/%.cpp
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C Compiler'
-	$(CC) -std=c++17 -O3 -g3 -Wall -I/usr/include/swss -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+	$(CC) -O3 -g3 -Wall -I/usr/include/swss -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
