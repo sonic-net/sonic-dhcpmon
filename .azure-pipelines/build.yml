@@ -1,12 +1,12 @@
 parameters:
-- name: 'arch'
+- name: arch
   type: string
-- name: 'pool'
+- name: pool
   type: object
   default: {}
-- name: 'containerImage'
+- name: artifact_name
   type: string
-- name: 'codeCoverage'
+- name: codeCoverage
   type: boolean
   default: false
 
@@ -14,10 +14,11 @@ jobs:
 - job:
   displayName: ${{ parameters.arch }}
   timeoutInMinutes: 60
+
   pool: ${{ parameters.pool }}
 
   container:
-    image: ${{ parameters.containerImage }}
+    image: sonicdev-microsoft.azurecr.io:443/sonic-slave-trixie:$(BUILD_BRANCH)-${{ parameters.arch }}
 
   steps:
   - ${{ if and(eq(parameters.arch, 'amd64'), parameters.codeCoverage) }}:
@@ -32,7 +33,7 @@ jobs:
   - script: |
       sudo apt-get update
       sudo apt-get install -y \
-          libboost1.83-all-dev \
+          libboost-all-dev \
           libexplain-dev \
           libhiredis-dev \
           libnl-3-dev \
@@ -51,17 +52,18 @@ jobs:
       source: specific
       project: build
       pipeline: Azure.sonic-buildimage.common_libs
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runVersion: 'specific'
+      pipelineId: '926659'
       path: $(Build.ArtifactStagingDirectory)/download
       ${{ if eq(parameters.arch, 'amd64') }}:
         artifact: common-lib
       ${{ else }}:
         artifact: common-lib.${{ parameters.arch }}
       patterns: |
-        target/debs/bookworm/libyang-*.deb
-        target/debs/bookworm/libyang_*.deb
-        target/debs/bookworm/libyang3_*.deb
+        target/debs/trixie/libyang-*.deb
+        target/debs/trixie/libyang_*.deb
+        target/debs/trixie/libyang3_*.deb
+        target/debs/trixie/libpcre*.deb
     displayName: "Download libyang from common lib"
   - script: |
       set -ex
@@ -74,15 +76,14 @@ jobs:
       project: build
       pipeline: Azure.sonic-swss-common
       ${{ if eq(parameters.arch, 'amd64') }}:
-        artifact: sonic-swss-common-bookworm
+        artifact: sonic-swss-common-trixie
       ${{ else }}:
-        artifact: sonic-swss-common-bookworm.${{ parameters.arch }}
+        artifact: sonic-swss-common-trixie.${{ parameters.arch }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       displayName: "Download sonic-swss-common"
   - script: |
       set -ex
-      # LIBSWSSCOMMON
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
     workingDirectory: $(Pipeline.Workspace)/
@@ -93,7 +94,7 @@ jobs:
       cp ../*.deb $(Build.ArtifactStagingDirectory)
     displayName: "Compile sonic dhcpmon"
   - publish: $(Build.ArtifactStagingDirectory)
-    artifact: sonic-dhcpmon.${{ parameters.arch }}
+    artifact: ${{ parameters.artifact_name }}
     displayName: "Archive dhcpmon debian packages"
   - ${{ if and(eq(parameters.arch, 'amd64'), parameters.codeCoverage) }}:
     - task: PublishCodeCoverageResults@1

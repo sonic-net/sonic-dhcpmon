@@ -8,21 +8,27 @@ trigger:
     include:
       - "*"
 
+variables:
+  - name: BUILD_BRANCH
+    ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      value: $(System.PullRequest.TargetBranch)
+    ${{ else }}:
+      value: $(Build.SourceBranchName)
+
 jobs:
 - template: .azure-pipelines/build.yml
   parameters:
     arch: amd64
     pool:
       vmImage: 'ubuntu-24.04'
-    codeCoverage: false
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:latest
+    artifact_name: sonic-dhcpmon.amd64
 - template: .azure-pipelines/build.yml
   parameters:
     arch: arm64
     pool: sonicso1ES-arm64
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-arm64:latest
+    artifact_name: sonic-dhcpmon.arm64
 - template: .azure-pipelines/build.yml
   parameters:
     arch: armhf
     pool: sonicso1ES-armhf
-    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-armhf:latest
+    artifact_name: sonic-dhcpmon.armhf

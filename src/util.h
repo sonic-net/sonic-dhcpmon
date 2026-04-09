@@ -8,6 +8,7 @@
 #include <syslog.h>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 #include <functional>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
