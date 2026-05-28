@@ -465,9 +465,11 @@ int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context)
             if (ifa->ifa_addr->sa_family == AF_INET6) {
                 struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)ifa->ifa_addr;
                 if (IN6_IS_ADDR_LINKLOCAL(&ipv6->sin6_addr)) {
-                    context->ipv6_lla = ipv6->sin6_addr;
+                    if (num_ipv6_lla == 0) {
+                        context->ipv6_lla = ipv6->sin6_addr;
+                    }
                     syslog(LOG_INFO, "Interface %s has IPv6 LLA %s", context->intf,
-                           generate_addr_string((const uint8_t *)&context->ipv6_lla, sizeof(context->ipv6_lla)).c_str());
+                           generate_addr_string((const uint8_t *)&ipv6->sin6_addr, sizeof(ipv6->sin6_addr)).c_str());
                     num_ipv6_lla++;
                 } else if (addr6_is_primary(context->intf, &ipv6->sin6_addr)) {
                     context->ipv6_gua = ipv6->sin6_addr;
@@ -484,8 +486,8 @@ int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context)
         }
         freeifaddrs(ifaddr);
 
-        if (num_ip_addr != 1 || (num_ipv6_gua != 1 && num_ipv6_lla != 1)) {
-            syslog(LOG_ALERT, "Unable to find exactly 1 ip addr, 1 ipv6 GUA and 1 ipv6 LLA on physical interface "
+        if (num_ip_addr != 1 || (num_ipv6_gua < 1 && num_ipv6_lla < 1)) {
+            syslog(LOG_ALERT, "Unable to find ip addr and at least 1 ipv6 GUA or LLA on physical interface "
                    "and 1 ipv6 loopback addr on loopback interface: %s", context->intf);
             break;
         }
