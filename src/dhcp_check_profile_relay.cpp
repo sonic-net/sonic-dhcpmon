@@ -67,7 +67,7 @@ dhcp_check_profile_t dhcp_check_profile_first_relay_rx = {
 // downlink interfaces, the src ip can be used to filter out which interface the packet is sent from.
 static dhcp_msg_check_profile_t tx_first_relay_reply = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
-    {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
+    {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&vlan_ip})},
     {DHCP_CHECK_DST_IP, (const void *)(new std::vector<const in_addr *>{&broadcast_ip})},
     {DHCP_CHECK_GIADDR, (const void *)(new std::vector<const in_addr *>{&giaddr_ip})},
 };
