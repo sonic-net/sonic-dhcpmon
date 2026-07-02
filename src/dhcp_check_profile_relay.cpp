@@ -62,9 +62,10 @@ dhcp_check_profile_t dhcp_check_profile_first_relay_rx = {
 };
 
 // DHCP messages sent to client
-// Relay sends reply packets to client with broadcast ip, and giaddr will not be unset so it remains giaddr of the first relay.
-// When sending back to downstream client, it will be from downlink interface, so src ip should be giaddr. When there are multiple
-// downlink interfaces, the src ip can be used to filter out which interface the packet is sent from.
+// Relay sends reply packets to client with broadcast ip, and giaddr remains the first relay identifier.
+// In single-ToR, giaddr_ip and vlan_ip are the same downstream VLAN SVI address. In dualtor, giaddr_ip is
+// Loopback0 for the server-facing relay identity, but client-facing replies are still sent from the downstream
+// VLAN SVI. Therefore src ip should be vlan_ip, while giaddr should remain giaddr_ip.
 static dhcp_msg_check_profile_t tx_first_relay_reply = {
     {DHCP_CHECK_INTF_TYPE, (const void *)(new std::vector<dhcp_device_intf_t>{DHCP_DEVICE_INTF_TYPE_DOWNLINK, DHCP_DEVICE_INTF_TYPE_MGMT})},
     {DHCP_CHECK_SRC_IP, (const void *)(new std::vector<const in_addr *>{&vlan_ip})},
