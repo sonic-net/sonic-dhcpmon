@@ -144,7 +144,8 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
     int rv = -1;
 
     do {
-        // for dual tor, loopback interface kind of replace the role of downstream interface
+        // For dualtor, Loopback0 provides the relay identifier used toward DHCP servers.
+        // Client-facing traffic still uses the downstream VLAN interface.
 
         dhcp_device_context_t loopback_context;
         if (strlen(name) >= sizeof(loopback_context.intf)) {
