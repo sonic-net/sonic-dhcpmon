@@ -60,9 +60,9 @@ jobs:
       ${{ else }}:
         artifact: common-lib.${{ parameters.arch }}
       patterns: |
-        target/debs/trixie/libyang-*.deb
-        target/debs/trixie/libyang_*.deb
         target/debs/trixie/libyang3_*.deb
+        target/debs/trixie/libyang-dev_3*.deb
+        target/debs/trixie/python3-libyang_*.deb
         target/debs/trixie/libpcre*.deb
     displayName: "Download libyang from common lib"
   - script: |
