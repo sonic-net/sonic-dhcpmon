@@ -181,18 +181,20 @@ static bool all_counters_initialized(const std::string &ifname)
 static void cleanup_stale_db_counters()
 {
     syslog_debug(LOG_INFO, "Cleaning up stale counters in counters_db");
-    std::string match_pattern = construct_counter_db_table_key(downstream_ifname, false) + COUNTERS_DB_SEPARATOR "*";
-    auto keys = mCountersDbPtr->keys(match_pattern);
-    for (const auto &key : keys) {
-        auto [vlan, ifname] = parse_counter_table_key(key);
-        if (vlan != downstream_ifname) {
-            continue;
+    for (bool is_v6 : {false, true}) {
+        std::string match_pattern = construct_counter_db_table_key(downstream_ifname, is_v6) + COUNTERS_DB_SEPARATOR "*";
+        auto keys = mCountersDbPtr->keys(match_pattern);
+        for (const auto &key : keys) {
+            auto [vlan, ifname] = parse_counter_table_key(key);
+            if (vlan != downstream_ifname) {
+                continue;
+            }
+            if (dhcp_devman_is_tracked_interface(ifname)) {
+                continue;
+            }
+            syslog_debug(LOG_INFO, "Deleting stale counter entry for interface %s", ifname.c_str());
+            mCountersDbPtr->del(key);
         }
-        if (dhcp_devman_is_tracked_interface(ifname)) {
-            continue;
-        }
-        syslog_debug(LOG_INFO, "Deleting stale counter entry for interface %s", ifname.c_str());
-        mCountersDbPtr->del(key);
     }
 }
 
