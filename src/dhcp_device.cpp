@@ -341,6 +341,16 @@ static void dhcp_print_counters_v6(const std::string &ifname, dhcp_counters_type
         DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_REPLY),
         DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_REPLY)
     );
+    syslog(
+        LOG_INFO,
+        "[%*s -%*s rx/tx] Relay-Forward: %*" PRIu64 "/%*" PRIu64
+        ", Relay-Reply: %*" PRIu64 "/%*" PRIu64,
+        IF_NAMESIZE, ifname.c_str(), 13, counter_desc[type],
+        DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_RELAY_FORW),
+        DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_RELAY_FORW),
+        DHCP_COUNTER_WIDTH, rx_counter.at(DHCPV6_MESSAGE_TYPE_RELAY_REPL),
+        DHCP_COUNTER_WIDTH, tx_counter.at(DHCPV6_MESSAGE_TYPE_RELAY_REPL)
+    );
 }
 
 void dhcp_device_print_status(const std::string &ifname, dhcp_counters_type_t type)

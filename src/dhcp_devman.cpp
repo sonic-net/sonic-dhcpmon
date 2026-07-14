@@ -76,6 +76,20 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
 {
     int rv = -1;
 
+    // Guard against duplicate -i* arguments referring to the same interface
+    // (e.g. an interface that appears twice on the dhcpmon command line because
+    // the supervisor template emitted it for two IP prefixes). Without this
+    // check, the per-type counter is incremented twice (which trips the
+    // `<= 1` asserts for -id/-im), and `intfs[name] = context;` below silently
+    // overwrites and leaks the previously-registered device context. Treat
+    // duplicates as a no-op success so the caller's error path does not fire.
+    if (intfs.find(name) != intfs.end()) {
+        syslog(LOG_INFO,
+               "Ignoring duplicate -i%c for interface %s (already registered)",
+               intf_type, name);
+        return 0;
+    }
+
     do {
         switch (intf_type) {
             case 'u':
@@ -130,7 +144,8 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
     int rv = -1;
 
     do {
-        // for dual tor, loopback interface kind of replace the role of downstream interface
+        // For dualtor, Loopback0 provides the relay identifier used toward DHCP servers.
+        // Client-facing traffic still uses the downstream VLAN interface.
 
         dhcp_device_context_t loopback_context;
         if (strlen(name) >= sizeof(loopback_context.intf)) {
