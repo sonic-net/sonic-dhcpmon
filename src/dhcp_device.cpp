@@ -531,6 +531,7 @@ dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type)
         syslog(LOG_ALERT, "malloc: failed to allocated device context memory for '%s'", ifname);
         goto no_free;
     }
+    memset(context, 0, sizeof(*context));
 
     // set device name
     strncpy(context->intf, ifname, sizeof(context->intf) - 1);
