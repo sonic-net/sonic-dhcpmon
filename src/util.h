@@ -2,18 +2,20 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string>
-#include <memory>
+#include <string.h>
+#include <utility>
 #include <jsoncpp/json/json.h>
 #include <syslog.h>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
-#include <functional>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 #include <netinet/ip6.h>
-#include <event2/event.h>
 
 #define COUNTERS_DB_COUNTER_TABLE_PREFIX "DHCPV4_COUNTER_TABLE:"
 #define COUNTERS_DB_COUNTER_TABLE_V6_PREFIX "DHCPV6_COUNTER_TABLE:"

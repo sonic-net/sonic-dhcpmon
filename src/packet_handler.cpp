@@ -4,10 +4,13 @@
  *  Implementation of packet handler functions
  */
 
+#include <errno.h>
 #include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <arpa/inet.h>
 #include <linux/if_packet.h>
+#include <string.h>
+#include <vector>
 
 #include "packet_handler.h"
 

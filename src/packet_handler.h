@@ -7,7 +7,7 @@
 #ifndef PACKET_HANDLER_H_
 #define PACKET_HANDLER_H_
 
-#include <string.h>
+#include <string>
 #include <unistd.h>
 #include <net/ethernet.h>
 #include <netinet/ip.h>

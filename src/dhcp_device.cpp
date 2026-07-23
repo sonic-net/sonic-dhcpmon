@@ -2,13 +2,18 @@
  * @file dhcp_device.cpp
  */
 
+#include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <libexplain/ioctl.h>
 #include <ifaddrs.h>
 #include <pcap.h>
 #include <syslog.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "dhcp_device.h"
 

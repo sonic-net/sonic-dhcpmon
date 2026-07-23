@@ -9,6 +9,7 @@
 #ifndef SOCKET_MANAGER_H_
 #define SOCKET_MANAGER_H_
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string>
 #include <unordered_map>

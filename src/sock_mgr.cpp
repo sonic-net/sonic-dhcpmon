@@ -2,8 +2,10 @@
  * @file socket_manager.cpp
  */
 
+#include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
+#include <memory>
 #include <string.h>
 #include <syslog.h>
 #include <stdlib.h>

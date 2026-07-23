@@ -15,7 +15,6 @@
 #ifndef DHCP_DEVMAN_H_
 #define DHCP_DEVMAN_H_
 
-#include <stdint.h>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>

@@ -5,7 +5,7 @@
  */
 
 #include <assert.h>
-#include <errno.h>
+#include <memory>
 #include <string.h>
 #include <syslog.h>
 #include <stdlib.h>
