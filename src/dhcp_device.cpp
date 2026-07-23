@@ -2,6 +2,8 @@
  * @file dhcp_device.cpp
  */
 
+#include <errno.h>
+#include <net/if.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -554,8 +556,12 @@ dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type)
         }
 
     // Management only needs interface identity for packet counters and health checks.
-    if (context->intf_type != DHCP_DEVICE_INTF_TYPE_MGMT &&
-        initialize_intf_mac_and_ip_addr(context) < 0) {
+    if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
+        if (if_nametoindex(context->intf) == 0) {
+            syslog(LOG_ALERT, "Failed to find management interface %s: %s", ifname, strerror(errno));
+            goto free_context;
+        }
+    } else if (initialize_intf_mac_and_ip_addr(context) < 0) {
         syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", ifname);
         goto free_context;
     }
