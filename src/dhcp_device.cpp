@@ -557,7 +557,7 @@ dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type)
 
     // Management only needs interface identity for packet counters and health checks.
     if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
-        if (if_nametoindex(context->intf) == 0) {
+        if (if_nametoindex(ifname) == 0) {
             syslog(LOG_ALERT, "Failed to find management interface %s: %s", ifname, strerror(errno));
             goto free_context;
         }
