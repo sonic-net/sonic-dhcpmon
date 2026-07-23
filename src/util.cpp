@@ -1,5 +1,8 @@
 #include <arpa/inet.h>
-#include <syslog.h>
+#include <exception>
+#include <memory>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "util.h"
 #include <swss/subscriberstatetable.h>

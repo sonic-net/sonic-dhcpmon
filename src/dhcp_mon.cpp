@@ -5,15 +5,19 @@
  */
 
 #include <signal.h>
-#include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <assert.h>
 #include <chrono>
 #include <algorithm>
 #include <event2/thread.h>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <unordered_set>
 
 #include "dhcp_mon.h"
 

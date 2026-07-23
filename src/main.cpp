@@ -5,19 +5,16 @@
  *
  */
 
-#include <err.h>
 #include <errno.h>
 #include <libgen.h>
-#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <semaphore.h>
 #include <syslog.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <swss/subscriberstatetable.h>
-#include <swss/select.h>
 
 #include "dhcp_mon.h" // starting dhcpmon
 #include "dhcp_devman.h" // for registering interfaces

@@ -9,6 +9,8 @@
 #ifndef DHCP_MON_H_
 #define DHCP_MON_H_
 
+#include <stddef.h>
+
 /** dhcpmon debug mode control flag, mostly used for logging for more frequent operations */
 extern bool debug_on;
 
