@@ -865,6 +865,7 @@ void callback_common(int fd, short event, void *arg)
     sock_info_t &sock_info = sock_mgr_get_sock_info(fd);
 
     for (int packet_count = 0; packet_count < MAX_PACKETS_PER_CALLBACK; packet_count++) {
+        slen = sizeof(sll);
         buffer_sz = recvfrom(fd, sock_info.buffer, sock_info.snaplen, MSG_DONTWAIT,
                              (struct sockaddr *)&sll, &slen);
         if (buffer_sz <= 0) {
