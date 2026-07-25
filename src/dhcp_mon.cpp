@@ -5,6 +5,7 @@
  */
 
 #include <signal.h>
+#include <deque>
 #include <errno.h>
 #include <exception>
 #include <stdlib.h>
@@ -53,6 +54,11 @@ static std::chrono::steady_clock::time_point last_update_time{};
 /** Default time point to check whether a time_point has been initialized or updated yet. */
 static const std::chrono::steady_clock::time_point default_time_point{};
 static std::thread::id main_thread_id;
+static bool topology_refresh_pending = false;
+static bool config_subscribers_failed = false;
+static std::shared_ptr<swss::SubscriberStateTable> vlan_member_subscriber;
+static std::shared_ptr<swss::SubscriberStateTable> portchannel_member_subscriber;
+static const char config_event_tag[] = "CONFIG_UPDATE";
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
@@ -60,6 +66,62 @@ std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnec
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
     mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
+
+static void config_update_callback(evutil_socket_t fd, short event, void *arg)
+{
+    auto *subscriber = static_cast<swss::SubscriberStateTable *>(arg);
+    try {
+        subscriber->readData();
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        subscriber->pops(entries);
+        if (!entries.empty()) {
+            topology_refresh_pending = true;
+        }
+    } catch (const std::exception &e) {
+        syslog(LOG_ALERT, "Failed to read DHCP membership update: %s", e.what());
+        config_subscribers_failed = true;
+        topology_refresh_pending = true;
+        main_event_mgr->suspend_all_events(config_event_tag);
+    }
+}
+
+static void clear_config_events()
+{
+    main_event_mgr->del_all_events(config_event_tag);
+    vlan_member_subscriber.reset();
+    portchannel_member_subscriber.reset();
+}
+
+static int register_config_events()
+{
+    clear_config_events();
+    try {
+        vlan_member_subscriber = std::make_shared<swss::SubscriberStateTable>(
+            mConfigDbPtr.get(), "VLAN_MEMBER");
+        portchannel_member_subscriber = std::make_shared<swss::SubscriberStateTable>(
+            mConfigDbPtr.get(), "PORTCHANNEL_MEMBER");
+    } catch (const std::exception &e) {
+        syslog(LOG_ALERT, "Failed to initialize DHCP membership subscribers: %s", e.what());
+        return -1;
+    }
+
+    for (const auto &subscriber : {vlan_member_subscriber, portchannel_member_subscriber}) {
+        struct event *config_event = event_new(main_event_mgr->get_base(), subscriber->getFd(),
+                                               EV_READ | EV_PERSIST, config_update_callback,
+                                               subscriber.get());
+        if (config_event == NULL ||
+            main_event_mgr->add_event(config_event, NULL, config_event_tag) < 0) {
+            if (config_event != NULL) {
+                event_free(config_event);
+            }
+            syslog(LOG_ALERT, "Failed to register DHCP membership event");
+            clear_config_events();
+            return -1;
+        }
+    }
+    config_subscribers_failed = false;
+    return 0;
+}
 
 /**
  * @code recalculate_agg_counter(all_counters);
@@ -398,6 +460,31 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
+
+    if (config_subscribers_failed) {
+        if (register_config_events() < 0) {
+            return;
+        }
+        topology_refresh_pending = true;
+    }
+
+    if (topology_refresh_pending) {
+        sock_mgr_suspend_packet_handler();
+        int result = dhcp_mon_reconcile_topology();
+        if (sock_mgr_resume_packet_handler() < 0) {
+            syslog(LOG_ALERT, "Failed to resume packet handlers after topology refresh");
+            return;
+        }
+        if (result == 1) {
+            return;
+        }
+        topology_refresh_pending = result < 0;
+        if (result != 0) {
+            return;
+        }
+        syslog(LOG_INFO, "Refreshed DHCP interface membership from CONFIG_DB");
+        return;
+    }
 
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
@@ -745,6 +832,10 @@ static int register_main_events()
             break;
         }
 
+        if (register_config_events() < 0) {
+            break;
+        }
+
         rv = 0;
 
         syslog(LOG_INFO, "Main events registered successfully");
@@ -788,6 +879,13 @@ int dhcp_mon_start()
         syslog(LOG_ALERT, "Failed to start main event loop");
         goto unregister_cache_counter_updater;
     }
+
+    topology_refresh_pending = true;
+    sock_mgr_suspend_packet_handler();
+    if (dhcp_mon_reconcile_topology() != 0 || sock_mgr_resume_packet_handler() < 0) {
+        goto unregister_main_events;
+    }
+    topology_refresh_pending = false;
 
     sock_mgr_drain_sock_buffer();
 
