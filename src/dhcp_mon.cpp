@@ -6,7 +6,12 @@
 
 #include <signal.h>
 #include <errno.h>
+#include <exception>
 #include <stdlib.h>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <assert.h>
@@ -47,6 +52,7 @@ static const char db_update_tag[] = "DB_UPDATE";
 static std::chrono::steady_clock::time_point last_update_time{};
 /** Default time point to check whether a time_point has been initialized or updated yet. */
 static const std::chrono::steady_clock::time_point default_time_point{};
+static std::thread::id main_thread_id;
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
@@ -459,45 +465,117 @@ static void free_event_mgr(struct event_mgr *mgr)
  * @param             none
  * @return            0 upon success, negative upon failure
  */
-static void initialize_all_intf_counters()
+static void reconcile_all_intf_counters(bool initialize_db)
 {
-    for (const auto &[vlan, intfs] : rev_vlan_map) {
-        for (const auto &ifname : intfs) {
+    std::unordered_set<std::string> valid_ifnames;
+    auto ensure_interface = [&valid_ifnames, initialize_db](const std::string &ifname) {
+        valid_ifnames.insert(ifname);
+        if (initialize_db && !all_counters_initialized(ifname)) {
             initialize_all_counters(ifname);
+        } else if (!initialize_db && !sock_mgr_all_cache_counters_initialized(ifname)) {
+            sock_mgr_init_cache_counters(ifname, DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
         }
-        initialize_all_counters(vlan);
-        sock_mgr_init_cache_counters(agg_dev_prefix + vlan, DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
+    };
+    auto ensure_aggregate = [&valid_ifnames](const std::string &ifname) {
+        valid_ifnames.insert(ifname);
+        if (!sock_mgr_all_cache_counters_initialized(ifname)) {
+            sock_mgr_init_cache_counters(ifname, DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
+        }
+    };
+
+    for (const auto &[vlan, members] : rev_vlan_map) {
+        for (const auto &ifname : members) {
+            ensure_interface(ifname);
+        }
+        ensure_interface(vlan);
+        ensure_aggregate(agg_dev_prefix + vlan);
     }
 
-    for (const auto &[portchan, intfs] : rev_portchan_map) {
-        for (const auto &ifname : intfs) {
-            initialize_all_counters(ifname);
+    for (const auto &[portchan, members] : rev_portchan_map) {
+        for (const auto &ifname : members) {
+            ensure_interface(ifname);
         }
-        initialize_all_counters(portchan);
-        sock_mgr_init_cache_counters(agg_dev_prefix + portchan, DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
+        ensure_interface(portchan);
+        ensure_aggregate(agg_dev_prefix + portchan);
     }
 
-    // Now all vlan and portchannel related interfaces have entries in counters, now do the rest (uplink)
-    for (const auto &itr : intfs) {
-        if (!all_counters_initialized(itr.first)) {
-            initialize_all_counters(itr.first);
-        }
+    for (const auto &entry : intfs) {
+        ensure_interface(entry.first);
     }
 
-    // also initialize mgmt and agg device counters
     if (mgmt_ifname.size() > 0) {
-        initialize_all_counters(mgmt_ifname);
+        ensure_interface(mgmt_ifname);
+    }
+    ensure_aggregate(agg_dev_all);
+
+    sock_mgr_remove_cache_counters_except(valid_ifnames);
+    for (int sock : {rx_sock, tx_sock, rx_sock_v6, tx_sock_v6}) {
+        sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+        recalculate_agg_counter(sock_info.all_counters);
+        recalculate_agg_counter(sock_info.all_counters_snapshot);
     }
 
-    sock_mgr_init_cache_counters(agg_dev_all, DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
+    if (initialize_db) {
+        cleanup_stale_db_counters();
+    }
+}
 
-    // counter db (the interfaces) might be outdated, clean up stale entries to be in sync with current tracked interfaces
-    cleanup_stale_db_counters();
+int dhcp_mon_reconcile_topology()
+{
+    if (std::this_thread::get_id() != main_thread_id) {
+        syslog(LOG_ALERT, "Topology reconciliation must run on the main event-loop thread");
+        return -1;
+    }
+
+    std::lock_guard<std::mutex> lock(db_sync_mutex);
+    if (!sock_mgr_pause_write_cache_to_db_all_cleared()) {
+        return 1;
+    }
+
+    auto old_vlan_map = vlan_map;
+    auto old_portchan_map = portchan_map;
+    auto old_rev_vlan_map = rev_vlan_map;
+    auto old_rev_portchan_map = rev_portchan_map;
+    std::unordered_map<int, std::pair<all_counters_t, all_counters_t>> old_counters;
+    for (int sock : {rx_sock, tx_sock, rx_sock_v6, tx_sock_v6}) {
+        sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+        old_counters[sock] = {sock_info.all_counters, sock_info.all_counters_snapshot};
+    }
+
+    try {
+        dhcp_devman_refresh_mappings();
+        reconcile_all_intf_counters(false);
+        mCountersDbPtr = std::make_shared<swss::DBConnector>("COUNTERS_DB", 0);
+        sock_mgr_update_db_counters();
+        cleanup_stale_db_counters();
+        sock_mgr_update_snapshot();
+    } catch (const std::exception &e) {
+        syslog(LOG_ALERT, "Failed to reconcile DHCP interface membership: %s", e.what());
+        vlan_map = std::move(old_vlan_map);
+        portchan_map = std::move(old_portchan_map);
+        rev_vlan_map = std::move(old_rev_vlan_map);
+        rev_portchan_map = std::move(old_rev_portchan_map);
+        for (auto &[sock, counters] : old_counters) {
+            sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+            sock_info.all_counters = std::move(counters.first);
+            sock_info.all_counters_snapshot = std::move(counters.second);
+        }
+        try {
+            mCountersDbPtr = std::make_shared<swss::DBConnector>("COUNTERS_DB", 0);
+            sock_mgr_update_db_counters();
+            cleanup_stale_db_counters();
+        } catch (const std::exception &rollback_error) {
+            syslog(LOG_ALERT, "Failed to restore COUNTERS_DB after topology rollback: %s", rollback_error.what());
+        }
+        return -1;
+    }
+    return 0;
 }
 
 int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_interval)
 {
     int rv = -1;
+    main_thread_id = std::this_thread::get_id();
 
     syslog(LOG_INFO, "Initializing dhcp monitor with snaplen %zu, window_sec %d, max_count %d, db_update_interval %d",
            snaplen, window_sec, max_count, db_update_interval);
@@ -519,7 +597,7 @@ int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_i
 
     // deinitialization of counters is not our responsibility
     // cache counter will be cleanup by sock_mgr_free and the initialized db we intend to keep
-    initialize_all_intf_counters();
+    reconcile_all_intf_counters(true);
     syslog(LOG_INFO, "Initialized all counters for tracked interfaces");
 
     window_interval_sec = window_sec;
