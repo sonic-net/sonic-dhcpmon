@@ -12,6 +12,8 @@ class event_mgr {
         int init_base();
         int add_event(struct event* event, const struct timeval *timeout, const std::string &tag="");
         void del_all_events(const std::string &tag="");
+        void suspend_all_events(const std::string &tag);
+        int resume_all_events(const std::string &tag);
         void activate_all_events(const std::string &tag="", int res=0);
         void free();
         struct event_base* get_base();

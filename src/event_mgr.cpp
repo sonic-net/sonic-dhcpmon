@@ -70,10 +70,11 @@ void event_mgr::del_all_events(const std::string &tag)
 {
     int count = 0;
     for (const auto &event : this->event_map[tag]) {
+        int fd = event_get_fd(event);
         event_del(event);
         event_free(event);
         count++;
-        syslog(LOG_INFO, "event_mgr: Deleted event (fd=%d) of tag %s from %s", event_get_fd(event), tag.c_str(), this->name.c_str());
+        syslog(LOG_INFO, "event_mgr: Deleted event (fd=%d) of tag %s from %s", fd, tag.c_str(), this->name.c_str());
     }
     if (tag != "") {
         std::unordered_set<struct event *> &tagless_set = this->event_map[""];
@@ -86,6 +87,24 @@ void event_mgr::del_all_events(const std::string &tag)
         this->event_map.clear();
     }
     syslog(LOG_INFO, "event_mgr: Deleted %d events of tag %s for %s", count, tag.c_str(), this->name.c_str());
+}
+
+void event_mgr::suspend_all_events(const std::string &tag)
+{
+    for (const auto &event : this->event_map[tag]) {
+        event_del(event);
+    }
+}
+
+int event_mgr::resume_all_events(const std::string &tag)
+{
+    for (const auto &event : this->event_map[tag]) {
+        if (event_add(event, NULL) < 0) {
+            this->suspend_all_events(tag);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 /**
