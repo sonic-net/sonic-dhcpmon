@@ -81,7 +81,7 @@ static void recalculate_agg_counter(all_counters_t &all_counters)
             if (mgmt_ifname == context->intf) {
                 continue;
             }
-            counter_t &agg_counter = all_counters.at(get_agg_counter_ifname(ifname, context->intf));
+            counter_t &agg_counter = all_counters.at(dhcp_devman_get_agg_counter_ifname(ifname));
             for (const auto &[msg_type, count] : counter) {
                 agg_counter[msg_type] += count;
             }

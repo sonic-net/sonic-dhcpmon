@@ -217,18 +217,6 @@ inline bool is_agg_counter(const std::string &ifname)
 }
 
 /**
- * @code                get_agg_counter_ifname(ifname, context);
- * @brief               Get aggregate counter name for given ifname and device context
- * @param ifname        Interface name
- * @param context       Pointer to device context
- * @return              Aggregate counter name
- */
-inline std::string get_agg_counter_ifname(const std::string &ifname, const std::string &context_ifname)
-{
-    return ifname != context_ifname ? agg_dev_prefix + context_ifname : agg_dev_all;
-}
-
-/**
  * @code                contains_value(v, value);
  * @brief               Check if a vector contains a specific value
  * @param v             The vector to search

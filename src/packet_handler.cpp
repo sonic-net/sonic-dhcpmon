@@ -52,9 +52,7 @@ static void increase_cache_counter(const std::string &ifname, const dhcp_device_
         return;
     }
 
-    // when ifname belongs to another context ifname, increase the aggregate counter for that context, 
-    // else when ifname is the context, we increase agg counter for all.
-    _increase_cache_counter(get_agg_counter_ifname(ifname, context->intf), sock, type);
+    _increase_cache_counter(dhcp_devman_get_agg_counter_ifname(ifname), sock, type);
     
     // optionally duplicate to context ifname, it will only be true when this is standby physical interface under a vlan on a dual tor
     if (dup_to_context) {
