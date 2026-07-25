@@ -118,6 +118,15 @@ bool dhcp_devman_is_tracked_interface(const std::string &ifname);
 int dhcp_devman_init();
 
 /**
+ * @code dhcp_devman_refresh_mappings();
+ *
+ * @brief rebuild VLAN and PortChannel membership mappings transactionally from CONFIG_DB.
+ *
+ * @return none
+ */
+void dhcp_devman_refresh_mappings();
+
+/**
  * @code dhcp_devman_free();
  *
  * @brief  frees resources used by device (interface) manager and undo init. Not only undo dhcp_devman_init but also all the add 

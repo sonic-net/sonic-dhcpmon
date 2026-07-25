@@ -205,11 +205,13 @@ bool dhcp_devman_is_tracked_interface(const std::string &ifname)
  * @param             none
  * @return            none
  */
-static void update_vlan_mapping()
+static void update_vlan_mapping(const std::shared_ptr<swss::DBConnector> &config_db,
+                                std::unordered_map<std::string, std::string> &vlan_mapping,
+                                std::unordered_map<std::string, std::unordered_set<std::string>> &reverse_vlan_mapping)
 {
     syslog(LOG_INFO, "Updating vlan mapping from VLAN_MEMBER");
     auto match_pattern = std::string("VLAN_MEMBER|*");
-    auto keys = mConfigDbPtr->keys(match_pattern);
+    auto keys = config_db->keys(match_pattern);
     std::string all_ifname;
     std::string all_skipped_ifname;
     for (const auto &key : keys) {
@@ -221,8 +223,8 @@ static void update_vlan_mapping()
             all_skipped_ifname += "<" + ifname + ", " + vlan + ">, ";
             continue;
         }
-        vlan_map[ifname] = vlan;
-        rev_vlan_map[vlan].insert(ifname);
+        vlan_mapping[ifname] = vlan;
+        reverse_vlan_mapping[vlan].insert(ifname);
         all_ifname += "<" + ifname + ", " + vlan + ">, ";
     }
     syslog(LOG_INFO, "Added vlan member interface mappings: %s", all_ifname.c_str());
@@ -236,11 +238,14 @@ static void update_vlan_mapping()
  * @param             none
  * @return            none
  */
-static void update_portchannel_mapping()
+static void update_portchannel_mapping(const std::shared_ptr<swss::DBConnector> &config_db,
+                                       const std::unordered_map<std::string, std::string> &vlan_mapping,
+                                       std::unordered_map<std::string, std::string> &portchannel_mapping,
+                                       std::unordered_map<std::string, std::unordered_set<std::string>> &reverse_portchannel_mapping)
 {
     syslog(LOG_INFO, "Updating port-channel mapping from PORTCHANNEL_MEMBER");
     auto match_pattern = std::string("PORTCHANNEL_MEMBER|*");
-    auto keys = mConfigDbPtr->keys(match_pattern);
+    auto keys = config_db->keys(match_pattern);
     std::string all_ifname;
     std::string all_skipped_ifname;
     for (const auto &key : keys) {
@@ -249,18 +254,35 @@ static void update_portchannel_mapping()
         auto portchannel = key.substr(first + 1, second - first - 1);
         auto ifname = key.substr(second + 1);
         bool portchannel_is_context = intfs.find(portchannel) != intfs.end();
-        bool portchannel_is_vlan_member = vlan_map.find(portchannel) != vlan_map.end();
+        bool portchannel_is_vlan_member = vlan_mapping.find(portchannel) != vlan_mapping.end();
         // Dual-ToR downlink counters require MUX attribution that is unavailable on a nested PortChannel.
         if (!portchannel_is_context && (!portchannel_is_vlan_member || dual_tor_mode)) {
             all_skipped_ifname += "<" + ifname + ", " + portchannel + ">, ";
             continue;
         }
-        portchan_map[ifname] = portchannel;
-        rev_portchan_map[portchannel].insert(ifname);
+        portchannel_mapping[ifname] = portchannel;
+        reverse_portchannel_mapping[portchannel].insert(ifname);
         all_ifname += "<" + ifname + ", " + portchannel + ">, ";
     }
     syslog(LOG_INFO, "Added port-channel member interface mappings: %s", all_ifname.c_str());
     syslog(LOG_INFO, "Skipped port-channel member interface mappings: %s", all_skipped_ifname.c_str());
+}
+
+void dhcp_devman_refresh_mappings()
+{
+    std::unordered_map<std::string, std::string> new_vlan_map;
+    std::unordered_map<std::string, std::string> new_portchan_map;
+    std::unordered_map<std::string, std::unordered_set<std::string>> new_rev_vlan_map;
+    std::unordered_map<std::string, std::unordered_set<std::string>> new_rev_portchan_map;
+    auto config_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
+
+    update_vlan_mapping(config_db, new_vlan_map, new_rev_vlan_map);
+    update_portchannel_mapping(config_db, new_vlan_map, new_portchan_map, new_rev_portchan_map);
+
+    vlan_map.swap(new_vlan_map);
+    portchan_map.swap(new_portchan_map);
+    rev_vlan_map.swap(new_rev_vlan_map);
+    rev_portchan_map.swap(new_rev_portchan_map);
 }
 
 int dhcp_devman_init()
@@ -300,8 +322,7 @@ int dhcp_devman_init()
     agg_dev_prefix = agg_dev_all + "-";
 
     // PortChannel members depend on VLAN mappings to recognize a PortChannel under a monitored VLAN.
-    update_vlan_mapping();
-    update_portchannel_mapping();
+    dhcp_devman_refresh_mappings();
 
     syslog(LOG_INFO, "Dhcp device manager initialized successfully");
 
@@ -312,6 +333,8 @@ void dhcp_devman_free()
 {
     vlan_map.clear();
     portchan_map.clear();
+    rev_vlan_map.clear();
+    rev_portchan_map.clear();
     for (const auto &[ifname, context] : intfs) {
         dhcp_device_free(context);
     }

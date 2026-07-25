@@ -27,6 +27,16 @@ extern bool debug_on;
 int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_interval);
 
 /**
+ * @code dhcp_mon_reconcile_topology();
+ *
+ * @brief rebuild interface membership and reconcile counters after packet processing is quiesced.
+ *        Must be called from the main event-loop thread.
+ *
+ * @return 0 on success, 1 when counter clear is active, otherwise negative
+ */
+int dhcp_mon_reconcile_topology();
+
+/**
  * @code dhcp_mon_free();
  *
  * @brief frees resources used by dhcp monitor
