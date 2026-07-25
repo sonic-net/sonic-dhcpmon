@@ -10,6 +10,8 @@
 #include <mutex>
 #include <pcap.h>
 #include <syslog.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "dhcp_device.h"
 
@@ -98,7 +100,7 @@ static void initialize_relay_flow_states(const std::string &ifname, int rx_sock,
 void dhcp_device_reset_health_state(const std::string &ifname)
 {
     std::lock_guard<std::mutex> lock(relay_flow_state_mutex);
-    relay_flow_states.clear();
+    relay_flow_states[rx_sock].erase(ifname);
     initialize_relay_flow_states(ifname, rx_sock, tx_sock,
                                  (const int *)monitored_msgs, monitored_msg_sz);
 }

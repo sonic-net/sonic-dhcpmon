@@ -48,7 +48,7 @@ static void alert_dhcp_relay_disparity(int duration)
 
 static void log_agg_error(int duration)
 {
-    syslog(LOG_ALERT, "dhcpmon detected DHCPv4/v6 packets received but none transmitted. Duration: %d (sec) for intf: %s",
+    syslog(LOG_ALERT, "dhcpmon detected DHCPv4 packets received but none transmitted. Duration: %d (sec) for intf: %s",
            duration, agg_dev_all.c_str());
 }
 
