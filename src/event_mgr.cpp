@@ -99,6 +99,11 @@ void event_mgr::suspend_all_events(const std::string &tag)
 int event_mgr::resume_all_events(const std::string &tag)
 {
     for (const auto &event : this->event_map[tag]) {
+        if (event_get_fd(event) < 0) {
+            syslog(LOG_ALERT, "event_mgr: Cannot resume non-fd event with tag %s", tag.c_str());
+            this->suspend_all_events(tag);
+            return -1;
+        }
         if (event_add(event, NULL) < 0) {
             this->suspend_all_events(tag);
             return -1;
