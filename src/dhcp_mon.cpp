@@ -461,14 +461,17 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
 
+    bool subscribers_available = true;
     if (config_subscribers_failed) {
         if (register_config_events() < 0) {
-            return;
+            topology_refresh_pending = true;
+            subscribers_available = false;
+        } else {
+            topology_refresh_pending = true;
         }
-        topology_refresh_pending = true;
     }
 
-    if (topology_refresh_pending) {
+    if (topology_refresh_pending && subscribers_available) {
         sock_mgr_suspend_packet_handler();
         int result = dhcp_mon_reconcile_topology();
         if (sock_mgr_resume_packet_handler() < 0) {
@@ -476,14 +479,15 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
             return;
         }
         if (result == 1) {
+            topology_refresh_pending = true;
+        } else {
+            topology_refresh_pending = result < 0;
+            if (result != 0) {
+                return;
+            }
+            syslog(LOG_INFO, "Refreshed DHCP interface membership from CONFIG_DB");
             return;
         }
-        topology_refresh_pending = result < 0;
-        if (result != 0) {
-            return;
-        }
-        syslog(LOG_INFO, "Refreshed DHCP interface membership from CONFIG_DB");
-        return;
     }
 
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
