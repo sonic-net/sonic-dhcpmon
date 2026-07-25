@@ -36,6 +36,11 @@ static const char dhcpv6_outbound_filter[] = "outbound and ip6 and udp and (port
 /** Tags for different events, so we can triiger only one type */
 static const char packet_handler_tag[] = "PacketHandler";
 static const char cache_counter_updater_tag[] = "CacheCounterUpdater";
+static const char keepalive_tag[] = "Keepalive";
+
+static void keepalive_callback(evutil_socket_t, short, void *)
+{
+}
 
 /* sock fd to sock_info mapping */
 std::unordered_map<int, sock_info_t> sock_map;
@@ -385,6 +390,18 @@ int sock_mgr_init_event_mgr()
             sock_mgr_free_event_mgr();
             return -1;
         }
+        struct event *keepalive_event = event_new(info.event_mgr_ptr->get_base(), -1, EV_PERSIST,
+                                                 keepalive_callback, NULL);
+        struct timeval keepalive_interval = {.tv_sec = 3600, .tv_usec = 0};
+        if (keepalive_event == NULL ||
+            info.event_mgr_ptr->add_event(keepalive_event, &keepalive_interval, keepalive_tag) < 0) {
+            if (keepalive_event != NULL) {
+                event_free(keepalive_event);
+            }
+            syslog(LOG_ALERT, "Failed to initialize event manager keepalive %s", info.name);
+            sock_mgr_free_event_mgr();
+            return -1;
+        }
     }
 
     return 0;
@@ -430,6 +447,24 @@ void sock_mgr_unregister_packet_handler()
     for (const auto &[sock, info] : sock_map) {
         info.event_mgr_ptr->del_all_events(packet_handler_tag);
     }
+}
+
+void sock_mgr_suspend_packet_handler()
+{
+    for (const auto &[sock, info] : sock_map) {
+        info.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+    }
+}
+
+int sock_mgr_resume_packet_handler()
+{
+    for (const auto &[sock, info] : sock_map) {
+        if (info.event_mgr_ptr->resume_all_events(packet_handler_tag) < 0) {
+            sock_mgr_suspend_packet_handler();
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int sock_mgr_register_cache_counter_updater(event_callback_fn callback)

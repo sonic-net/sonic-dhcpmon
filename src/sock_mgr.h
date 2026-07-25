@@ -59,6 +59,12 @@ int sock_mgr_register_packet_handler();
 /** Unregister packet handler for socket manager */
 void sock_mgr_unregister_packet_handler();
 
+/** Temporarily suspend registered packet handlers */
+void sock_mgr_suspend_packet_handler();
+
+/** Resume registered packet handlers */
+int sock_mgr_resume_packet_handler();
+
 /** Register cache counter updater callback for socket manager */
 int sock_mgr_register_cache_counter_updater(event_callback_fn callback);
 
