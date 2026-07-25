@@ -47,7 +47,7 @@ static void increase_cache_counter(const std::string &ifname, const dhcp_device_
 {
     _increase_cache_counter(ifname, sock, type);
 
-    // we seperate mgmt interface from others and do not increase agg counter
+    // we separate mgmt interface from others and do not increase agg counter
     if (mgmt_ifname != "" && mgmt_ifname.compare(context->intf) == 0) {
         return;
     }
