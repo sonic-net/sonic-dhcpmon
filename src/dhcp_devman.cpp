@@ -248,7 +248,10 @@ static void update_portchannel_mapping()
         auto second = key.find_last_of('|');
         auto portchannel = key.substr(first + 1, second - first - 1);
         auto ifname = key.substr(second + 1);
-        if (intfs.find(portchannel) == intfs.end()) {
+        bool portchannel_is_context = intfs.find(portchannel) != intfs.end();
+        bool portchannel_is_vlan_member = vlan_map.find(portchannel) != vlan_map.end();
+        // Dual-ToR downlink counters require MUX attribution that is unavailable on a nested PortChannel.
+        if (!portchannel_is_context && (!portchannel_is_vlan_member || dual_tor_mode)) {
             all_skipped_ifname += "<" + ifname + ", " + portchannel + ">, ";
             continue;
         }
@@ -296,7 +299,7 @@ int dhcp_devman_init()
     agg_dev_all = "Agg-" + downstream_ifname;
     agg_dev_prefix = agg_dev_all + "-";
 
-    // vlan and its members, portchannel and its members are initialized regardless of whether they are in cmdline
+    // PortChannel members depend on VLAN mappings to recognize a PortChannel under a monitored VLAN.
     update_vlan_mapping();
     update_portchannel_mapping();
 
@@ -321,15 +324,34 @@ const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &i
     if (iter != intfs.end()) {
         return iter->second;
     }
-    const auto vlan = vlan_map.find(ifname);
-    if (vlan != vlan_map.end() && ifname != vlan->second) {
-        return dhcp_devman_get_device_context(vlan->second);
-    }
     const auto port_channel = portchan_map.find(ifname);
     if (port_channel != portchan_map.end() && ifname != port_channel->second) {
         return dhcp_devman_get_device_context(port_channel->second);
     }
+    const auto vlan = vlan_map.find(ifname);
+    if (vlan != vlan_map.end() && ifname != vlan->second) {
+        return dhcp_devman_get_device_context(vlan->second);
+    }
     return NULL;
+}
+
+std::string dhcp_devman_get_parent_ifname(const std::string &ifname)
+{
+    const auto port_channel = portchan_map.find(ifname);
+    if (port_channel != portchan_map.end()) {
+        return port_channel->second;
+    }
+    const auto vlan = vlan_map.find(ifname);
+    if (vlan != vlan_map.end()) {
+        return vlan->second;
+    }
+    return "";
+}
+
+std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname)
+{
+    const std::string parent_ifname = dhcp_devman_get_parent_ifname(ifname);
+    return parent_ifname.empty() ? agg_dev_all : agg_dev_prefix + parent_ifname;
 }
 
 void dhcp_devman_print_all_status(dhcp_counters_type_t type)
