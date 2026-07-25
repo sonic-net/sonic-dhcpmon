@@ -5,6 +5,7 @@
  */
 
 #include <signal.h>
+#include <atomic>
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -41,6 +42,7 @@ static constexpr int MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC = 5;
 static constexpr int CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC = 1;
 /** Mutex lock to modify write_counter_to_db for different threads */
 static std::mutex db_sync_mutex;
+static std::atomic<bool> health_reset_pending{false};
 /** tag for db_update event */
 static const char db_update_tag[] = "DB_UPDATE";
 /** Latest timestamp of writing cache counter to COUNTERS_DB */
@@ -373,6 +375,7 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     // for discrepency in interface between cache counter and DB counter, we dont handle it in this function
     // we leave it to db updater to handle it
     if (sock_mgr_pause_write_cache_to_db_all_cleared()) {
+        health_reset_pending = true;
         syslog(LOG_INFO, "All sockets cleared pause_write_cache_to_db, start write back to DB counter from cache counter");
         main_event_mgr->activate_all_events(db_update_tag, EV_TIMEOUT);
     }
@@ -392,6 +395,10 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
+
+    if (health_reset_pending.exchange(false)) {
+        reset_dhcp_relay_health_state(agg_dev_all);
+    }
 
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
@@ -520,6 +527,7 @@ int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_i
     // deinitialization of counters is not our responsibility
     // cache counter will be cleanup by sock_mgr_free and the initialized db we intend to keep
     initialize_all_intf_counters();
+    reset_dhcp_relay_health_state(agg_dev_all);
     syslog(LOG_INFO, "Initialized all counters for tracked interfaces");
 
     window_interval_sec = window_sec;
