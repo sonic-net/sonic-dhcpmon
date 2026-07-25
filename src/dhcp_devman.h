@@ -139,6 +139,28 @@ void dhcp_devman_free();
 const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &ifname);
 
 /**
+ * @code dhcp_devman_get_parent_ifname(ifname);
+ *
+ * @brief find the immediate parent interface of a tracked interface.
+ *
+ * @param ifname           interface name
+ *
+ * @return parent interface name, or an empty string for a root context interface
+ */
+std::string dhcp_devman_get_parent_ifname(const std::string &ifname);
+
+/**
+ * @code dhcp_devman_get_agg_counter_ifname(ifname);
+ *
+ * @brief find the aggregate counter for the immediate parent of a tracked interface.
+ *
+ * @param ifname           interface name
+ *
+ * @return aggregate counter name
+ */
+std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname);
+
+/**
  * @code dhcp_devman_print_all_status(type);
  *
  * @brief prints status counters for all interfaces to syslog.
