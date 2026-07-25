@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <linux/filter.h>
 #include <thread>
 
@@ -103,6 +104,9 @@ void sock_mgr_init_cache_counters(const std::string &ifname, uint8_t dhcp_messag
 
 /** Check if cache counters are initialized for given ifname for all sockets */
 bool sock_mgr_all_cache_counters_initialized(const std::string &ifname);
+
+/** Remove cache counters that are not present in the valid interface set */
+void sock_mgr_remove_cache_counters_except(const std::unordered_set<std::string> &valid_ifnames);
 
 /** Update database counters from cache counters for all sockets */
 void sock_mgr_update_db_counters();

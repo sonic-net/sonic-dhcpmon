@@ -614,6 +614,20 @@ bool sock_mgr_all_cache_counters_initialized(const std::string &ifname)
     return true;
 }
 
+void sock_mgr_remove_cache_counters_except(const std::unordered_set<std::string> &valid_ifnames)
+{
+    for (auto &[sock, info] : sock_map) {
+        for (auto itr = info.all_counters.begin(); itr != info.all_counters.end();) {
+            if (valid_ifnames.find(itr->first) == valid_ifnames.end()) {
+                info.all_counters_snapshot.erase(itr->first);
+                itr = info.all_counters.erase(itr);
+            } else {
+                itr++;
+            }
+        }
+    }
+}
+
 void sock_mgr_update_db_counters()
 {
     syslog_debug(LOG_INFO, "Updating all cache counters to DB counters");
