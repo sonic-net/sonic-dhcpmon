@@ -61,6 +61,7 @@ static bool config_subscribers_failed = false;
 static std::shared_ptr<swss::SubscriberStateTable> vlan_member_subscriber;
 static std::shared_ptr<swss::SubscriberStateTable> portchannel_member_subscriber;
 static const char config_event_tag[] = "CONFIG_UPDATE";
+static int dhcp_mon_reconcile_topology();
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
@@ -651,7 +652,7 @@ static void reconcile_all_intf_counters(bool initialize_db)
     }
 }
 
-int dhcp_mon_reconcile_topology()
+static int dhcp_mon_reconcile_topology()
 {
     if (std::this_thread::get_id() != main_thread_id) {
         syslog(LOG_ALERT, "Topology reconciliation must run on the main event-loop thread");
