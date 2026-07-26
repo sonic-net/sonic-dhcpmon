@@ -112,6 +112,25 @@ bool counter_state_write_lock::owns_lock() const
 
 counter_state_read_lock::counter_state_read_lock()
 {
+    if (packet_handlers_enabled.load(std::memory_order_acquire) &&
+        counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+        try {
+            lock = std::shared_lock<std::shared_mutex>(packet_handler_quiesce_mutex,
+                                                       std::try_to_lock);
+        } catch (const std::system_error &e) {
+            syslog(LOG_ALERT, "Failed to lock DHCP counter state for packet handling: %s", e.what());
+            return;
+        }
+        if (lock.owns_lock() &&
+            packet_handlers_enabled.load(std::memory_order_acquire) &&
+            counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+            return;
+        }
+        if (lock.owns_lock()) {
+            lock.unlock();
+        }
+    }
+
     while (packet_handlers_enabled.load(std::memory_order_acquire)) {
         {
             std::unique_lock<std::mutex> wait_lock(counter_state_wait_mutex);
