@@ -465,7 +465,6 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
-    std::unique_lock<std::shared_mutex> counter_lock(packet_handler_quiesce_mutex);
 
     bool subscribers_available = true;
     if (config_subscribers_failed) {
@@ -497,6 +496,7 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
         }
     }
 
+    std::unique_lock<std::shared_mutex> counter_lock(packet_handler_quiesce_mutex);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT_V6);
