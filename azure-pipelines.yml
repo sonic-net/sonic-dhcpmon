@@ -22,13 +22,16 @@ jobs:
     pool:
       vmImage: 'ubuntu-24.04'
     artifact_name: sonic-dhcpmon.amd64
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm:latest
 - template: .azure-pipelines/build.yml
   parameters:
     arch: arm64
     pool: sonicso1ES-arm64
     artifact_name: sonic-dhcpmon.arm64
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-arm64:latest
 - template: .azure-pipelines/build.yml
   parameters:
     arch: armhf
     pool: sonicso1ES-armhf
     artifact_name: sonic-dhcpmon.armhf
+    containerImage: sonicdev-microsoft.azurecr.io:443/sonic-slave-bookworm-armhf:latest
