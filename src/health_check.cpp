@@ -1,5 +1,5 @@
 /**
- * @file dhcp_check.cpp
+ * @file health_check.cpp
  * DHCP health check implementation
  */
 
