@@ -243,6 +243,9 @@ void dhcp_device_free(dhcp_device_context_t *context);
  */
 dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_check_t check_type);
 
+/** Return details for the most recent interface hierarchy mismatch */
+const std::string &dhcp_device_get_last_counter_mismatch();
+
 /**
  * @code dhcp_device_get_untransmitted_windows(ifname);
  *

@@ -108,7 +108,7 @@ static dhcp_mon_status_t check_per_interface_rx_health()
 static void log_agg_per_interface_rx_error(int duration)
 {
     syslog(LOG_ALERT, "sum of rx per interface counter does not equal corresponding vlan/portchan counter."
-           " Duration: %d (sec)", duration);
+           " Duration: %d (sec). %s", duration, dhcp_device_get_last_counter_mismatch().c_str());
 }
 
 static dhcp_mon_status_t check_per_interface_tx_health()
@@ -130,7 +130,7 @@ static void log_agg_per_interface_tx_error(int duration)
 {
     syslog(LOG_ALERT, "each tx per interface counter does not equal corresponding vlan counter,"
            " or sum of tx per interface counter does not equal corresponding portchan counter."
-           " Duration: %d (sec)", duration);
+           " Duration: %d (sec). %s", duration, dhcp_device_get_last_counter_mismatch().c_str());
 }
 
 static dhcp_mon_status_t check_per_interface_rx_health_v6()
