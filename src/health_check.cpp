@@ -163,7 +163,7 @@ static dhcp_mon_status_t check_per_interface_tx_health_v6()
     return DHCP_MON_STATUS_HEALTHY;
 }
 
-/** DHCP monitor state data for aggregate device for mgmt device */
+/** DHCP monitor state for management traffic and interface hierarchy consistency */
 static dhcp_mon_state_t state_data[] = {
     [0] = {
         .check_health = check_mgmt_health,
