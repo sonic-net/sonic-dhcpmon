@@ -91,6 +91,11 @@ void event_mgr::del_all_events(const std::string &tag)
 
 void event_mgr::suspend_all_events(const std::string &tag)
 {
+    if (tag.empty()) {
+        syslog(LOG_ALERT, "event_mgr: Refusing to suspend untagged events for %s",
+               this->name.c_str());
+        return;
+    }
     for (const auto &event : this->event_map[tag]) {
         event_del(event);
     }
@@ -98,13 +103,21 @@ void event_mgr::suspend_all_events(const std::string &tag)
 
 int event_mgr::resume_all_events(const std::string &tag)
 {
+    if (tag.empty()) {
+        syslog(LOG_ALERT, "event_mgr: Refusing to resume untagged events for %s",
+               this->name.c_str());
+        return -1;
+    }
     for (const auto &event : this->event_map[tag]) {
         if (event_get_fd(event) < 0) {
-            syslog(LOG_ALERT, "event_mgr: Cannot resume non-fd event with tag %s", tag.c_str());
+            syslog(LOG_ALERT, "event_mgr: Cannot resume non-fd event with tag %s for %s",
+                   tag.c_str(), this->name.c_str());
             this->suspend_all_events(tag);
             return -1;
         }
         if (event_add(event, NULL) < 0) {
+            syslog(LOG_ALERT, "event_mgr: Failed to resume event (fd=%d) with tag %s for %s",
+                   event_get_fd(event), tag.c_str(), this->name.c_str());
             this->suspend_all_events(tag);
             return -1;
         }
