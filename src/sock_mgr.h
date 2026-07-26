@@ -134,8 +134,6 @@ void sock_mgr_init_cache_counters(const std::string &ifname, uint8_t dhcp_messag
 /** Check if cache counters are initialized for given ifname for all sockets */
 bool sock_mgr_all_cache_counters_initialized(const std::string &ifname);
 
-/** Update database counters from cache counters for all sockets */
-void sock_mgr_update_db_counters();
 /** Write a previously locked, immutable cache-counter snapshot */
 void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket);
 

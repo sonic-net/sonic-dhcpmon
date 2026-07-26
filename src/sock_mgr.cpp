@@ -748,8 +748,3 @@ void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket)
                      all_skipped_ifname.c_str(), downstream_ifname.c_str());
     }
 }
-
-void sock_mgr_update_db_counters()
-{
-    sock_mgr_update_db_counters(sock_mgr_copy_cache_counters());
-}
