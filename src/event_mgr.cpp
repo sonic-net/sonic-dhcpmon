@@ -69,19 +69,26 @@ int event_mgr::add_event(struct event* event, const struct timeval *timeout, con
 void event_mgr::del_all_events(const std::string &tag)
 {
     int count = 0;
-    for (const auto &event : this->event_map[tag]) {
+    const auto tagged_events = this->event_map.find(tag);
+    if (tagged_events == this->event_map.end()) {
+        if (!tag.empty()) {
+            syslog(LOG_WARNING, "event_mgr: Cannot delete unknown tag %s for %s",
+                   tag.c_str(), this->name.c_str());
+        }
+        return;
+    }
+    auto all_events = this->event_map.find("");
+    for (const auto &event : tagged_events->second) {
         int fd = event_get_fd(event);
+        if (!tag.empty() && all_events != this->event_map.end()) {
+            all_events->second.erase(event);
+        }
         event_del(event);
         event_free(event);
         count++;
         syslog(LOG_INFO, "event_mgr: Deleted event (fd=%d) of tag %s from %s", fd, tag.c_str(), this->name.c_str());
     }
-    if (tag != "") {
-        std::unordered_set<struct event *> &tagless_set = this->event_map[""];
-        std::unordered_set<struct event *> &tagged_set = this->event_map[tag];
-        for (const auto &event : tagged_set) {
-            tagless_set.erase(event);
-        }
+    if (!tag.empty()) {
         this->event_map.erase(tag);
     } else {
         this->event_map.clear();
@@ -146,7 +153,15 @@ int event_mgr::resume_all_events(const std::string &tag)
  */
 void event_mgr::activate_all_events(const std::string &tag, int res)
 {
-    for (const auto &event : this->event_map[tag]) {
+    const auto tagged_events = this->event_map.find(tag);
+    if (tagged_events == this->event_map.end()) {
+        if (!tag.empty()) {
+            syslog(LOG_WARNING, "event_mgr: Cannot activate unknown tag %s for %s",
+                   tag.c_str(), this->name.c_str());
+        }
+        return;
+    }
+    for (const auto &event : tagged_events->second) {
         event_active(event, res, 0);
         syslog(LOG_INFO, "event_mgr: Activated event (fd=%d) of tag %s from %s", event_get_fd(event), tag.c_str(), this->name.c_str());
     }
