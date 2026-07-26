@@ -867,6 +867,8 @@ static int register_main_events()
 int dhcp_mon_start()
 {
     int rv = -1;
+    int reconcile_result = -1;
+    int resume_result = -1;
 
     syslog(LOG_INFO, "Starting dhcp monitor in %s", debug_on ? "debug mode" : "normal mode");
 
@@ -887,7 +889,9 @@ int dhcp_mon_start()
 
     topology_refresh_pending = true;
     sock_mgr_suspend_packet_handler();
-    if (dhcp_mon_reconcile_topology() != 0 || sock_mgr_resume_packet_handler() < 0) {
+    reconcile_result = dhcp_mon_reconcile_topology();
+    resume_result = sock_mgr_resume_packet_handler();
+    if (reconcile_result != 0 || resume_result < 0) {
         goto unregister_main_events;
     }
     topology_refresh_pending = false;
