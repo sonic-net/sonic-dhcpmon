@@ -11,6 +11,9 @@
 #include <unistd.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
+#include <condition_variable>
+#include <mutex>
+#include <system_error>
 #include <sys/socket.h>
 
 #include "sock_mgr.h"
@@ -40,9 +43,99 @@ static const char cache_counter_updater_tag[] = "CacheCounterUpdater";
 /* sock fd to sock_info mapping */
 std::unordered_map<int, sock_info_t> sock_map;
 
+std::shared_mutex counter_state_mutex;
+std::atomic<unsigned int> counter_state_writers_pending{0};
+static std::mutex counter_state_wait_mutex;
+static std::condition_variable counter_state_wait_cv;
+
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 
 extern std::string downstream_ifname;
+
+counter_state_write_lock::counter_state_write_lock()
+{
+    {
+        std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+        counter_state_writers_pending.fetch_add(1, std::memory_order_acq_rel);
+    }
+    try {
+        lock = std::unique_lock<std::shared_mutex>(counter_state_mutex);
+    } catch (const std::system_error &e) {
+        bool notify = false;
+        {
+            std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+            notify = counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
+        }
+        if (notify) {
+            counter_state_wait_cv.notify_all();
+        }
+        syslog(LOG_ALERT, "Failed to lock DHCP counter state: %s", e.what());
+    }
+}
+
+counter_state_write_lock::~counter_state_write_lock()
+{
+    if (!lock.owns_lock()) {
+        return;
+    }
+    lock.unlock();
+    bool notify = false;
+    {
+        std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+        notify = counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
+    }
+    if (notify) {
+        counter_state_wait_cv.notify_all();
+    }
+}
+
+bool counter_state_write_lock::owns_lock() const
+{
+    return lock.owns_lock();
+}
+
+counter_state_read_lock::counter_state_read_lock()
+{
+    if (counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+        try {
+            lock = std::shared_lock<std::shared_mutex>(counter_state_mutex, std::try_to_lock);
+        } catch (const std::system_error &e) {
+            syslog(LOG_ALERT, "Failed to lock DHCP counter state for packet handling: %s", e.what());
+            return;
+        }
+        if (lock.owns_lock() &&
+            counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+            return;
+        }
+        if (lock.owns_lock()) {
+            lock.unlock();
+        }
+    }
+
+    while (true) {
+        {
+            std::unique_lock<std::mutex> wait_lock(counter_state_wait_mutex);
+            counter_state_wait_cv.wait(wait_lock, [] {
+                return counter_state_writers_pending.load(std::memory_order_acquire) == 0;
+            });
+        }
+        try {
+            lock = std::shared_lock<std::shared_mutex>(counter_state_mutex);
+        } catch (const std::system_error &e) {
+            syslog(LOG_ALERT, "Failed to lock DHCP counter state for packet handling: %s", e.what());
+            return;
+        }
+        if (counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+            return;
+        }
+        lock.unlock();
+    }
+}
+
+bool counter_state_read_lock::owns_lock() const
+{
+    return lock.owns_lock();
+}
 
 /**
  * @code opensocket();

@@ -861,6 +861,10 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 
 void callback_common(int fd, short event, void *arg)
 {
+    counter_state_read_lock counter_lock;
+    if (!counter_lock.owns_lock()) {
+        return;
+    }
     ssize_t buffer_sz;
     struct sockaddr_ll sll;
     socklen_t slen = sizeof(sll);

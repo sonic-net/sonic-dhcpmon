@@ -9,7 +9,10 @@
 #ifndef SOCKET_MANAGER_H_
 #define SOCKET_MANAGER_H_
 
+#include <atomic>
+#include <mutex>
 #include <stdint.h>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <linux/filter.h>
@@ -40,6 +43,32 @@ typedef struct {
 
 /** sock file descriptors, serve as the identifier of all related information described in sock_info_t */
 extern int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
+
+extern std::shared_mutex counter_state_mutex;
+extern std::atomic<unsigned int> counter_state_writers_pending;
+
+class counter_state_write_lock
+{
+    public:
+        counter_state_write_lock();
+        ~counter_state_write_lock();
+        bool owns_lock() const;
+        counter_state_write_lock(const counter_state_write_lock &) = delete;
+        counter_state_write_lock &operator=(const counter_state_write_lock &) = delete;
+
+    private:
+        std::unique_lock<std::shared_mutex> lock;
+};
+
+class counter_state_read_lock
+{
+    public:
+        counter_state_read_lock();
+        bool owns_lock() const;
+
+    private:
+        std::shared_lock<std::shared_mutex> lock;
+};
 
 /** Initialize socket manager with given snaplen */
 int sock_mgr_init(uint32_t snaplen);
