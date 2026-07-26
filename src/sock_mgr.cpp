@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
+#include <mutex>
 #include <sys/socket.h>
 
 #include "sock_mgr.h"
@@ -44,6 +45,10 @@ static void keepalive_callback(evutil_socket_t, short, void *)
 
 /* sock fd to sock_info mapping */
 std::unordered_map<int, sock_info_t> sock_map;
+
+std::shared_mutex packet_handler_quiesce_mutex;
+std::atomic<bool> packet_handlers_enabled{true};
+static std::unique_lock<std::shared_mutex> packet_handler_quiesce_lock;
 
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 
@@ -451,20 +456,38 @@ void sock_mgr_unregister_packet_handler()
 
 void sock_mgr_suspend_packet_handler()
 {
-    for (const auto &[sock, info] : sock_map) {
-        info.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+    if (packet_handler_quiesce_lock.owns_lock()) {
+        syslog(LOG_ALERT, "Packet handlers are already suspended");
+        return;
     }
+    packet_handlers_enabled.store(false, std::memory_order_release);
+    for (const auto &entry : sock_map) {
+        entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+    }
+    packet_handler_quiesce_lock = std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
 }
 
 int sock_mgr_resume_packet_handler()
 {
-    for (const auto &[sock, info] : sock_map) {
-        if (info.event_mgr_ptr->resume_all_events(packet_handler_tag) < 0) {
-            sock_mgr_suspend_packet_handler();
-            return -1;
+    if (!packet_handler_quiesce_lock.owns_lock()) {
+        syslog(LOG_ALERT, "Packet handlers are not suspended");
+        return -1;
+    }
+    int result = 0;
+    for (const auto &entry : sock_map) {
+        if (entry.second.event_mgr_ptr->resume_all_events(packet_handler_tag) < 0) {
+            for (const auto &suspended_entry : sock_map) {
+                suspended_entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+            }
+            result = -1;
+            break;
         }
     }
-    return 0;
+    if (result == 0) {
+        packet_handlers_enabled.store(true, std::memory_order_release);
+    }
+    packet_handler_quiesce_lock.unlock();
+    return result;
 }
 
 int sock_mgr_register_cache_counter_updater(event_callback_fn callback)
