@@ -10,6 +10,7 @@
 #define SOCKET_MANAGER_H_
 
 #include <atomic>
+#include <mutex>
 #include <stdint.h>
 #include <shared_mutex>
 #include <string>
@@ -47,6 +48,19 @@ extern int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
 /** Guards in-flight packet callbacks while topology and counters are reconciled */
 extern std::shared_mutex packet_handler_quiesce_mutex;
 extern std::atomic<bool> packet_handlers_enabled;
+extern std::atomic<unsigned int> counter_state_writers_pending;
+
+class counter_state_write_lock
+{
+    public:
+        counter_state_write_lock();
+        ~counter_state_write_lock();
+        counter_state_write_lock(const counter_state_write_lock &) = delete;
+        counter_state_write_lock &operator=(const counter_state_write_lock &) = delete;
+
+    private:
+        std::unique_lock<std::shared_mutex> lock;
+};
 
 /** Initialize socket manager with given snaplen */
 int sock_mgr_init(uint32_t snaplen);
