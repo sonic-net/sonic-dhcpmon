@@ -48,11 +48,29 @@ std::unordered_map<int, sock_info_t> sock_map;
 
 std::shared_mutex packet_handler_quiesce_mutex;
 std::atomic<bool> packet_handlers_enabled{true};
+std::atomic<unsigned int> counter_state_writers_pending{0};
 static std::unique_lock<std::shared_mutex> packet_handler_quiesce_lock;
 
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 
 extern std::string downstream_ifname;
+
+counter_state_write_lock::counter_state_write_lock()
+{
+    counter_state_writers_pending.fetch_add(1, std::memory_order_acq_rel);
+    try {
+        lock = std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
+    } catch (...) {
+        counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel);
+        throw;
+    }
+}
+
+counter_state_write_lock::~counter_state_write_lock()
+{
+    lock.unlock();
+    counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel);
+}
 
 /**
  * @code opensocket();
