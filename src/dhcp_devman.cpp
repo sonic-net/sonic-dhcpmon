@@ -361,11 +361,11 @@ const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &i
 std::string dhcp_devman_get_parent_ifname(const std::string &ifname)
 {
     const auto port_channel = portchan_map.find(ifname);
-    if (port_channel != portchan_map.end()) {
+    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
         return port_channel->second;
     }
     const auto vlan = vlan_map.find(ifname);
-    if (vlan != vlan_map.end()) {
+    if (vlan != vlan_map.end() && ifname != vlan->second) {
         return vlan->second;
     }
     return "";
