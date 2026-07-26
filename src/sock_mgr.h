@@ -136,9 +136,10 @@ bool sock_mgr_all_cache_counters_initialized(const std::string &ifname);
 
 /** Update database counters from cache counters for all sockets */
 void sock_mgr_update_db_counters();
+/** Write a previously locked, immutable cache-counter snapshot */
 void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket);
 
-/** Copy cache counters for all sockets */
+/** Copy cache counters for all sockets; caller must hold counter_state_write_lock */
 socket_counters_t sock_mgr_copy_cache_counters();
 
 #endif /* SOCKET_MANAGER_H_ */

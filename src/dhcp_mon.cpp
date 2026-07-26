@@ -228,11 +228,11 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
     if (fd == SIGUSR1) {
         // we need to sync cache counter from COUNTERS_DB
         syslog(LOG_INFO, "Received signal to stop writing to DB counter");
+        std::lock_guard<std::mutex> lock(db_sync_mutex);
         counter_state_write_lock counter_lock;
         if (!counter_lock.owns_lock()) {
             return;
         }
-        std::lock_guard<std::mutex> lock(db_sync_mutex);
         sock_mgr_pause_write_cache_to_db();
         syslog(LOG_INFO, "Stopped writing to DB counter");
         mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_ifname, "pause_write_to_db", "done");
@@ -269,11 +269,11 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     
     syslog(LOG_INFO, "Start updating %s cache counter from DB counter", sock_info.name);
 
+    std::lock_guard<std::mutex> lock(db_sync_mutex);
     counter_state_write_lock counter_lock;
     if (!counter_lock.owns_lock()) {
         return;
     }
-    std::lock_guard<std::mutex> lock(db_sync_mutex);
 
     // can only sync db to cache counter and db updater is paused, otherwise its unexpected
     if (!sock_info.pause_write_cache_to_db) {
@@ -436,13 +436,12 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
     syslog_debug(LOG_INFO, "Received db update signal");
     syslog_debug(LOG_INFO, "Sync cache counter to DB counter");
     socket_counters_t counters_by_socket;
-    std::unique_lock<std::mutex> lock;
+    std::unique_lock<std::mutex> lock(db_sync_mutex);
     {
         counter_state_write_lock counter_lock;
         if (!counter_lock.owns_lock()) {
             return;
         }
-        lock = std::unique_lock<std::mutex>(db_sync_mutex);
         // If there is clear counter going on and its been longer than expected
         // consider the clear counter operation failed so we don't block db update forever
         if (!sock_mgr_pause_write_cache_to_db_all_cleared() && last_update_time != default_time_point) {
