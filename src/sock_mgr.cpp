@@ -835,7 +835,12 @@ void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket)
     syslog_debug(LOG_INFO, "Updating all cache counters to DB counters");
 
     for (const auto &[sock, all_counters] : counters_by_socket) {
-        const sock_info_t &info = sock_mgr_get_sock_info(sock);
+        const auto sock_info = sock_map.find(sock);
+        if (sock_info == sock_map.end()) {
+            syslog(LOG_WARNING, "Skip DB counter snapshot for unknown socket %d", sock);
+            continue;
+        }
+        const sock_info_t &info = sock_info->second;
         syslog_debug(LOG_INFO, "Start updating socket %d %s DB counter from cache counter", sock, info.name);
         int msg_type_count = info.is_v6 ? DHCPV6_MESSAGE_TYPE_COUNT : DHCP_MESSAGE_TYPE_COUNT;
         const std::string *msg_type_name = info.is_v6 ? db_counter_name_v6 : db_counter_name;
