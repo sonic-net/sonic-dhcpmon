@@ -760,9 +760,9 @@ void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket)
             std::string table_name = construct_counter_db_table_key(ifname, info.is_v6);
             mCountersDbPtr->hset(table_name, info.is_rx ? "RX" : "TX", value);
         }
-        syslog_debug(LOG_INFO, "Processing cache counter entry of %sfor downstream vlan %s",
+        syslog_debug(LOG_INFO, "Processing cache counter entry of %s for downstream vlan %s",
                      all_ifname.c_str(), downstream_ifname.c_str());
-        syslog_debug(LOG_INFO, "Skipped aggregated device counter entry of %sfor downstream vlan %s",
+        syslog_debug(LOG_INFO, "Skipped aggregated device counter entry of %s for downstream vlan %s",
                      all_skipped_ifname.c_str(), downstream_ifname.c_str());
     }
 }

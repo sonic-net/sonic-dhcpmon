@@ -357,9 +357,9 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 
         updated_intfs.insert(ifname);
     }
-    syslog(LOG_INFO, "Processing DB entry of %sfor downstream vlan %s",
+    syslog(LOG_INFO, "Processing DB entry of %s for downstream vlan %s",
              all_ifname.c_str(), downstream_ifname.c_str());
-    syslog(LOG_INFO, "Skipped DB entry of %sbecause we are only interested in %s",
+    syslog(LOG_INFO, "Skipped DB entry of %s because we are only interested in %s",
              all_skipped_ifname.c_str(), downstream_ifname.c_str());
 
     // log any cache counter entry not appearing in db counter. This is highly unexpected.
