@@ -69,6 +69,8 @@ static const char *counter_desc[DHCP_COUNTERS_COUNT] = {
     [DHCP_COUNTERS_SNAPSHOT_V6] = "Snapshot_V6",
 };
 
+static std::string last_counter_mismatch;
+
 /**
  * @code check_counter_not_transmitted(ifname, rx_sock, tx_sock, monitored_msgs, monitored_msg_cnt);
  * @brief Check if there are received DHCP messages that are not transmitted out
@@ -217,10 +219,26 @@ static bool check_counters_delta_expected(const std::string &ifname, const std::
         uint64_t delta = counters.at(monitored_msgs[i]) - counters_snapshot.at(monitored_msgs[i]);
         uint64_t other_delta = other_counters.at(monitored_msgs[i]) - other_counters_snapshot.at(monitored_msgs[i]);
         if (delta * ratio != other_delta) {
+            const std::string *message_names = sock_info.is_v6 ? db_counter_name_v6 : db_counter_name;
+            last_counter_mismatch =
+                std::string(sock_info.is_v6 ? "IPv6 " : "IPv4 ") +
+                (sock_info.is_rx ? "RX" : "TX") +
+                " edge parent=" + ifname +
+                " parent_delta=" + std::to_string(delta) +
+                " child_aggregate=" + other_ifname +
+                " child_delta=" + std::to_string(other_delta) +
+                " expected_ratio=" + std::to_string(ratio) +
+                " message=" + message_names[monitored_msgs[i]];
             return false;
         }
     }
+
     return true;
+}
+
+const std::string &dhcp_device_get_last_counter_mismatch()
+{
+    return last_counter_mismatch;
 }
 
 static dhcp_mon_status_t dhcp_device_check_agg_equal_rx(const std::string &ifname)
