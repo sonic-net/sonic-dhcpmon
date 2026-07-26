@@ -552,10 +552,10 @@ static void free_event_mgr(struct event_mgr *mgr)
 }
 
 /**
- * @code              initialize_all_intf_counters();
- * @brief             Initialize all db counters and cache counters for all tracked interfaces
- * @param             none
- * @return            0 upon success, negative upon failure
+ * @code              reconcile_all_intf_counters(initialize_db);
+ * @brief             Reconcile cache counters for all tracked interfaces
+ * @param initialize_db initialize missing database counters when true
+ * @return            none
  */
 static void reconcile_all_intf_counters(bool initialize_db)
 {
