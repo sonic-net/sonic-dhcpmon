@@ -215,8 +215,10 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
 
     {
         counter_state_write_lock counter_lock;
-        dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT);
-        dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT_V6);
+        if (counter_lock.owns_lock()) {
+            dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT);
+            dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT_V6);
+        }
     }
 
     if ((fd == SIGTERM) || (fd == SIGINT)) {
@@ -227,6 +229,9 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
         // we need to sync cache counter from COUNTERS_DB
         syslog(LOG_INFO, "Received signal to stop writing to DB counter");
         counter_state_write_lock counter_lock;
+        if (!counter_lock.owns_lock()) {
+            return;
+        }
         std::lock_guard<std::mutex> lock(db_sync_mutex);
         sock_mgr_pause_write_cache_to_db();
         syslog(LOG_INFO, "Stopped writing to DB counter");
@@ -265,6 +270,9 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     syslog(LOG_INFO, "Start updating %s cache counter from DB counter", sock_info.name);
 
     counter_state_write_lock counter_lock;
+    if (!counter_lock.owns_lock()) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(db_sync_mutex);
 
     // can only sync db to cache counter and db updater is paused, otherwise its unexpected
@@ -398,6 +406,9 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
     counter_state_write_lock counter_lock;
+    if (!counter_lock.owns_lock()) {
+        return;
+    }
 
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
@@ -425,6 +436,9 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
     syslog_debug(LOG_INFO, "Received db update signal");
     syslog_debug(LOG_INFO, "Sync cache counter to DB counter");
     counter_state_write_lock counter_lock;
+    if (!counter_lock.owns_lock()) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(db_sync_mutex);
     // If there is clear counter going on and its been longer than expected
     // consider the clear counter operation failed so we don't block db update forever
