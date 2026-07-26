@@ -53,7 +53,7 @@ static std::chrono::steady_clock::time_point last_update_time{};
 /** Default time point to check whether a time_point has been initialized or updated yet. */
 static const std::chrono::steady_clock::time_point default_time_point{};
 static std::thread::id main_thread_id;
-static int dhcp_mon_reconcile_topology();
+[[maybe_unused]] static int dhcp_mon_reconcile_topology();
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
