@@ -152,42 +152,50 @@ static dhcp_mon_state_t state_data[] = {
         .alert = alert_dhcp_relay_disparity,
         .log = log_agg_error,
         .count = 0,
+        .reported = false,
     },
     [1] = {
         .check_health = check_mgmt_health,
         .log = log_mgmt_error,
         .count = 0,
+        .reported = false,
     },
     [2] = {
         .check_health = check_agg_health_v6,
         .alert = alert_dhcp_relay_disparity,
         .log = log_agg_error,
         .count = 0,
+        .reported = false,
     },
     [3] = {
         .check_health = check_mgmt_health_v6,
         .log = log_mgmt_error,
         .count = 0,
+        .reported = false,
     },
     [4] = {
         .check_health = check_per_interface_rx_health,
         .log = log_agg_per_interface_rx_error,
         .count = 0,
+        .reported = false,
     },
     [5] = {
         .check_health = check_per_interface_tx_health,
         .log = log_agg_per_interface_tx_error,
         .count = 0,
+        .reported = false,
     },
     [6] = {
         .check_health = check_per_interface_rx_health_v6,
         .log = log_agg_per_interface_rx_error,
         .count = 0,
+        .reported = false,
     },
     [7] = {
         .check_health = check_per_interface_tx_health_v6,
         .log = log_agg_per_interface_tx_error,
         .count = 0,
+        .reported = false,
     },
 };
 
