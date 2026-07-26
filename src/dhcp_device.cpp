@@ -120,10 +120,10 @@ static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &if
  * @param ifname           interface name
  * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
-static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &ifname)
+static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &)
 {
-   return  check_counter_not_transmitted(ifname, rx_sock_v6, tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz) ?
-           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
+    // Client and relay DHCPv6 message types differ across the relay boundary.
+    return DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
