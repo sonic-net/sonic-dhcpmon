@@ -9,7 +9,9 @@
 #ifndef SOCKET_MANAGER_H_
 #define SOCKET_MANAGER_H_
 
+#include <atomic>
 #include <stdint.h>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -41,6 +43,10 @@ typedef struct {
 
 /** sock file descriptors, serve as the identifier of all related information described in sock_info_t */
 extern int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
+
+/** Guards in-flight packet callbacks while topology and counters are reconciled */
+extern std::shared_mutex packet_handler_quiesce_mutex;
+extern std::atomic<bool> packet_handlers_enabled;
 
 /** Initialize socket manager with given snaplen */
 int sock_mgr_init(uint32_t snaplen);
