@@ -15,6 +15,7 @@
 #include <mutex>
 #include <system_error>
 #include <sys/socket.h>
+#include <utility>
 
 #if __cplusplus < 201703L
 #error "dhcpmon counter synchronization requires C++17 or newer"
