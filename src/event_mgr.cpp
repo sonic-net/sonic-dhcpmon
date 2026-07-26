@@ -1,4 +1,5 @@
 #include <syslog.h>
+#include <vector>
 
 #include "event_mgr.h"
 
@@ -92,22 +93,42 @@ void event_mgr::del_all_events(const std::string &tag)
     syslog(LOG_INFO, "event_mgr: Deleted %d events of tag %s for %s", count, tag.c_str(), this->name.c_str());
 }
 
-void event_mgr::suspend_all_events(const std::string &tag)
+int event_mgr::suspend_all_events(const std::string &tag)
 {
     if (tag.empty()) {
         syslog(LOG_ALERT, "event_mgr: Refusing to suspend untagged events for %s",
                this->name.c_str());
-        return;
+        return -1;
     }
     const auto tagged_events = this->event_map.find(tag);
     if (tagged_events == this->event_map.end()) {
         syslog(LOG_ALERT, "event_mgr: Cannot suspend unknown tag %s for %s",
                tag.c_str(), this->name.c_str());
-        return;
+        return -1;
     }
     for (const auto &event : tagged_events->second) {
-        event_del(event);
+        if (event_get_fd(event) < 0) {
+            syslog(LOG_ALERT, "event_mgr: Cannot suspend non-fd event with tag %s for %s",
+                   tag.c_str(), this->name.c_str());
+            return -1;
+        }
     }
+    std::vector<struct event *> deleted_events;
+    for (const auto &event : tagged_events->second) {
+        if (event_del(event) < 0) {
+            bool restore_failed = false;
+            for (struct event *deleted_event : deleted_events) {
+                if (event_add(deleted_event, NULL) < 0) {
+                    restore_failed = true;
+                }
+            }
+            syslog(LOG_ALERT, "event_mgr: Failed to suspend event (fd=%d) with tag %s for %s",
+                   event_get_fd(event), tag.c_str(), this->name.c_str());
+            return restore_failed ? -2 : -1;
+        }
+        deleted_events.push_back(event);
+    }
+    return 0;
 }
 
 int event_mgr::resume_all_events(const std::string &tag)
