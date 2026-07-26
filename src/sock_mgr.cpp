@@ -16,6 +16,10 @@
 #include <system_error>
 #include <sys/socket.h>
 
+#if __cplusplus < 201402L
+#error "dhcpmon counter synchronization requires C++14 or newer"
+#endif
+
 #include "sock_mgr.h"
 
 #include "packet_handler.h"     /** for attaching packet handler */
@@ -89,7 +93,12 @@ counter_state_write_lock::~counter_state_write_lock()
     if (!lock.owns_lock()) {
         return;
     }
-    lock.unlock();
+    try {
+        lock.unlock();
+    } catch (const std::system_error &e) {
+        syslog(LOG_ALERT, "Failed to unlock DHCP counter state: %s", e.what());
+        return;
+    }
     if (!registered_writer) {
         return;
     }
