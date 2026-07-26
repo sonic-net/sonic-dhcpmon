@@ -154,7 +154,7 @@ static std::unordered_map<int, uint32_t> get_untransmitted_windows(const std::st
         if (had_pending) {
             if (previous_tx_credit || current_tx_activity) {
                 state.pending_windows = 0;
-                state.tx_credit = previous_tx_credit && current_tx_activity ? 1 : 0;
+                state.tx_credit = current_tx_activity ? 1 : 0;
             } else {
                 state.pending_windows++;
                 state.tx_credit = 0;
@@ -165,7 +165,7 @@ static std::unordered_map<int, uint32_t> get_untransmitted_windows(const std::st
                 state.tx_credit = current_tx_activity ? 1 : 0;
             } else if (current_tx_activity) {
                 state.pending_windows = 0;
-                state.tx_credit = 0;
+                state.tx_credit = 1;
             } else {
                 state.pending_windows = 1;
                 state.tx_credit = 0;
