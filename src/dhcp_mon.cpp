@@ -229,11 +229,13 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
         // we need to sync cache counter from COUNTERS_DB
         syslog(LOG_INFO, "Received signal to stop writing to DB counter");
         std::lock_guard<std::mutex> lock(db_sync_mutex);
-        counter_state_write_lock counter_lock;
-        if (!counter_lock.owns_lock()) {
-            return;
+        {
+            counter_state_write_lock counter_lock;
+            if (!counter_lock.owns_lock()) {
+                return;
+            }
+            sock_mgr_pause_write_cache_to_db();
         }
-        sock_mgr_pause_write_cache_to_db();
         syslog(LOG_INFO, "Stopped writing to DB counter");
         mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_ifname, "pause_write_to_db", "done");
         mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_V6_PREFIX + downstream_ifname, "pause_write_to_db", "done");
