@@ -17,6 +17,7 @@ typedef struct
     void (*alert)(int duration);                   /** alert function when check failed */
     void (*log)(int duration);                     /** log function when check passed */
     int count;                                     /** count in the number of unhealthy checks */
+    bool reported;                                 /** whether the current unhealthy episode was reported */
 } dhcp_mon_state_t;
 
 extern event_handle_t g_events_handle;

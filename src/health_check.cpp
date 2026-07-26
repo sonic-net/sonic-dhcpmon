@@ -201,7 +201,7 @@ void check_dhcp_relay_health()
         dhcp_mon_status_t dhcp_mon_status = state_data[i].check_health();
         switch (dhcp_mon_status) {
             case DHCP_MON_STATUS_UNHEALTHY:
-                if (++state_data[i].count > dhcp_unhealthy_max_count) {
+                if (++state_data[i].count > dhcp_unhealthy_max_count && !state_data[i].reported) {
                     int duration = state_data[i].count * window_interval_sec;
                 
                     if (state_data[i].alert) {
@@ -210,10 +210,12 @@ void check_dhcp_relay_health()
                     if (state_data[i].log) {
                         state_data[i].log(duration);
                     }
+                    state_data[i].reported = true;
                 }
                 break;
             case DHCP_MON_STATUS_HEALTHY:
                 state_data[i].count = 0;
+                state_data[i].reported = false;
                 break;
             case DHCP_MON_STATUS_INDETERMINATE:
                 if (state_data[i].count) {
