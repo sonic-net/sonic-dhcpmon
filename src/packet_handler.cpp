@@ -8,6 +8,7 @@
 #include <netinet/ether.h>
 #include <arpa/inet.h>
 #include <linux/if_packet.h>
+#include <mutex>
 
 #include "packet_handler.h"
 
@@ -862,8 +863,10 @@ void callback_common(int fd, short event, void *arg)
     if (!packet_handlers_enabled.load(std::memory_order_acquire)) {
         return;
     }
-    std::shared_lock<std::shared_mutex> packet_handler_lock(packet_handler_quiesce_mutex);
-    if (!packet_handlers_enabled.load(std::memory_order_acquire)) {
+    std::shared_lock<std::shared_mutex> packet_handler_lock(packet_handler_quiesce_mutex,
+                                                            std::try_to_lock);
+    if (!packet_handler_lock.owns_lock() ||
+        !packet_handlers_enabled.load(std::memory_order_acquire)) {
         return;
     }
     ssize_t buffer_sz;
