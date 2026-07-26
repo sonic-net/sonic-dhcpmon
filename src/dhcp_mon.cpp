@@ -532,14 +532,23 @@ int dhcp_mon_reconcile_topology()
         return 1;
     }
 
-    auto old_vlan_map = vlan_map;
-    auto old_portchan_map = portchan_map;
-    auto old_rev_vlan_map = rev_vlan_map;
-    auto old_rev_portchan_map = rev_portchan_map;
+    decltype(vlan_map) old_vlan_map;
+    decltype(portchan_map) old_portchan_map;
+    decltype(rev_vlan_map) old_rev_vlan_map;
+    decltype(rev_portchan_map) old_rev_portchan_map;
     std::unordered_map<int, std::pair<all_counters_t, all_counters_t>> old_counters;
-    for (int sock : {rx_sock, tx_sock, rx_sock_v6, tx_sock_v6}) {
-        sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
-        old_counters[sock] = {sock_info.all_counters, sock_info.all_counters_snapshot};
+    try {
+        old_vlan_map = vlan_map;
+        old_portchan_map = portchan_map;
+        old_rev_vlan_map = rev_vlan_map;
+        old_rev_portchan_map = rev_portchan_map;
+        for (int sock : {rx_sock, tx_sock, rx_sock_v6, tx_sock_v6}) {
+            sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+            old_counters[sock] = {sock_info.all_counters, sock_info.all_counters_snapshot};
+        }
+    } catch (const std::exception &e) {
+        syslog(LOG_ALERT, "Failed to snapshot DHCP topology before reconciliation: %s", e.what());
+        return -1;
     }
 
     try {
