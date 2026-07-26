@@ -247,6 +247,7 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
  * @code dhcp_device_get_untransmitted_windows(ifname);
  *
  * @brief update and return unmatched DHCPv4 relay RX age in health windows per message type.
+ *        Caller must hold the counter-state write lock or otherwise quiesce packet handlers.
  *
  * @param ifname           interface name
  *
@@ -258,6 +259,7 @@ std::unordered_map<int, uint32_t> dhcp_device_get_untransmitted_windows(const st
  * @code dhcp_device_reset_health_state(ifname);
  *
  * @brief reset relay health watermarks to the current counters for an interface.
+ *        Caller must hold the counter-state write lock or otherwise quiesce packet handlers.
  *
  * @param ifname           interface name
  *
