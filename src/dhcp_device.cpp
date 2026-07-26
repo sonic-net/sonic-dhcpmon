@@ -113,12 +113,9 @@ static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &if
 }
 
 /**
- * @code dhcp_device_check_positive_health_v6(ifname);
- * @brief Check that DHCPv6 relayed messages are being transmitted out of this interface/dev
- *        using its counters. The interface is positively healthy if there are DHCPv6 message
- *        travelling through it.
- * @param ifname           interface name
- * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ * @code dhcp_device_check_positive_health_v6();
+ * @brief Same-message-type RX/TX comparison is not valid across the DHCPv6 relay boundary.
+ * @return DHCP_MON_STATUS_INDETERMINATE
  */
 static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &)
 {
