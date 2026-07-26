@@ -11,7 +11,9 @@
 #include <unistd.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
+#include <condition_variable>
 #include <mutex>
+#include <system_error>
 #include <sys/socket.h>
 
 #include "sock_mgr.h"
@@ -50,26 +52,97 @@ std::shared_mutex packet_handler_quiesce_mutex;
 std::atomic<bool> packet_handlers_enabled{true};
 std::atomic<unsigned int> counter_state_writers_pending{0};
 static std::unique_lock<std::shared_mutex> packet_handler_quiesce_lock;
+static std::mutex counter_state_wait_mutex;
+static std::condition_variable counter_state_wait_cv;
 
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
 
 extern std::string downstream_ifname;
 
+static void set_packet_handlers_enabled(bool enabled)
+{
+    {
+        std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+        packet_handlers_enabled.store(enabled, std::memory_order_release);
+    }
+    counter_state_wait_cv.notify_all();
+}
+
 counter_state_write_lock::counter_state_write_lock()
 {
-    counter_state_writers_pending.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+        counter_state_writers_pending.fetch_add(1, std::memory_order_acq_rel);
+    }
     try {
         lock = std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
-    } catch (...) {
-        counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel);
-        throw;
+    } catch (const std::system_error &e) {
+        bool notify = false;
+        {
+            std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+            notify = counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
+        }
+        if (notify) {
+            counter_state_wait_cv.notify_all();
+        }
+        syslog(LOG_ALERT, "Failed to lock DHCP counter state: %s", e.what());
     }
 }
 
 counter_state_write_lock::~counter_state_write_lock()
 {
+    if (!lock.owns_lock()) {
+        return;
+    }
     lock.unlock();
-    counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel);
+    bool notify = false;
+    {
+        std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
+        notify = counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
+    }
+    if (notify) {
+        counter_state_wait_cv.notify_all();
+    }
+}
+
+bool counter_state_write_lock::owns_lock() const
+{
+    return lock.owns_lock();
+}
+
+counter_state_read_lock::counter_state_read_lock()
+{
+    while (packet_handlers_enabled.load(std::memory_order_acquire)) {
+        {
+            std::unique_lock<std::mutex> wait_lock(counter_state_wait_mutex);
+            counter_state_wait_cv.wait(wait_lock, [] {
+                return !packet_handlers_enabled.load(std::memory_order_acquire) ||
+                       counter_state_writers_pending.load(std::memory_order_acquire) == 0;
+            });
+        }
+        if (!packet_handlers_enabled.load(std::memory_order_acquire)) {
+            return;
+        }
+        try {
+            lock = std::shared_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
+        } catch (const std::system_error &e) {
+            syslog(LOG_ALERT, "Failed to lock DHCP counter state for packet handling: %s", e.what());
+            return;
+        }
+        if (!packet_handlers_enabled.load(std::memory_order_acquire)) {
+            lock.unlock();
+            return;
+        }
+        if (counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+            return;
+        }
+        lock.unlock();
+    }
+}
+
+bool counter_state_read_lock::owns_lock() const
+{
+    return lock.owns_lock();
 }
 
 /**
@@ -472,17 +545,37 @@ void sock_mgr_unregister_packet_handler()
     }
 }
 
-void sock_mgr_suspend_packet_handler()
+int sock_mgr_suspend_packet_handler()
 {
     if (packet_handler_quiesce_lock.owns_lock()) {
         syslog(LOG_ALERT, "Packet handlers are already suspended");
-        return;
+        return -1;
     }
-    packet_handlers_enabled.store(false, std::memory_order_release);
     for (const auto &entry : sock_map) {
         entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
     }
-    packet_handler_quiesce_lock = std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
+    set_packet_handlers_enabled(false);
+    try {
+        packet_handler_quiesce_lock = std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
+    } catch (const std::system_error &e) {
+        syslog(LOG_ALERT, "Failed to quiesce packet handlers: %s", e.what());
+        set_packet_handlers_enabled(true);
+        int restore_result = 0;
+        for (const auto &entry : sock_map) {
+            if (entry.second.event_mgr_ptr->resume_all_events(packet_handler_tag) < 0) {
+                restore_result = -1;
+            }
+        }
+        if (restore_result < 0) {
+            set_packet_handlers_enabled(false);
+            for (const auto &entry : sock_map) {
+                entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+            }
+            syslog(LOG_ALERT, "Failed to restore packet handlers after quiesce failure");
+        }
+        return -1;
+    }
+    return 0;
 }
 
 int sock_mgr_resume_packet_handler()
@@ -491,21 +584,24 @@ int sock_mgr_resume_packet_handler()
         syslog(LOG_ALERT, "Packet handlers are not suspended");
         return -1;
     }
-    int result = 0;
+    set_packet_handlers_enabled(true);
+    packet_handler_quiesce_lock.unlock();
+
     for (const auto &entry : sock_map) {
         if (entry.second.event_mgr_ptr->resume_all_events(packet_handler_tag) < 0) {
+            set_packet_handlers_enabled(false);
             for (const auto &suspended_entry : sock_map) {
                 suspended_entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
             }
-            result = -1;
-            break;
+            try {
+                packet_handler_quiesce_lock = std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
+            } catch (const std::system_error &e) {
+                syslog(LOG_ALERT, "Failed to restore packet quiesce lock after resume failure: %s", e.what());
+            }
+            return -1;
         }
     }
-    if (result == 0) {
-        packet_handlers_enabled.store(true, std::memory_order_release);
-    }
-    packet_handler_quiesce_lock.unlock();
-    return result;
+    return 0;
 }
 
 int sock_mgr_register_cache_counter_updater(event_callback_fn callback)
