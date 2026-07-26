@@ -15,6 +15,7 @@
 #include <mutex>
 #include <system_error>
 #include <sys/socket.h>
+#include <vector>
 
 #include "sock_mgr.h"
 
@@ -36,7 +37,7 @@ static const char dhcp_outbound_filter[] = "outbound and ip and udp and (port 67
 static const char dhcpv6_inbound_filter[] = "inbound and ip6 and udp and (port 547 or port 546)";
 static const char dhcpv6_outbound_filter[] = "outbound and ip6 and udp and (port 547 or port 546)";
 
-/** Tags for different events, so we can triiger only one type */
+/** Tags for different events, so we can trigger only one type */
 static const char packet_handler_tag[] = "PacketHandler";
 static const char cache_counter_updater_tag[] = "CacheCounterUpdater";
 static const char keepalive_tag[] = "Keepalive";
@@ -570,8 +571,33 @@ int sock_mgr_suspend_packet_handler()
         syslog(LOG_ALERT, "Packet handlers are already suspended");
         return -1;
     }
+    std::vector<event_mgr *> suspended_event_mgrs;
     for (const auto &entry : sock_map) {
-        entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+        event_mgr *event_mgr_ptr = entry.second.event_mgr_ptr;
+        int suspend_result = event_mgr_ptr->suspend_all_events(packet_handler_tag);
+        if (suspend_result < 0) {
+            bool rollback_failed = suspend_result < -1;
+            for (event_mgr *suspended_event_mgr : suspended_event_mgrs) {
+                if (suspended_event_mgr->resume_all_events(packet_handler_tag) < 0) {
+                    rollback_failed = true;
+                }
+            }
+            if (rollback_failed) {
+                set_packet_handlers_enabled(false);
+                for (const auto &rollback_entry : sock_map) {
+                    rollback_entry.second.event_mgr_ptr->suspend_all_events(packet_handler_tag);
+                }
+                try {
+                    packet_handler_quiesce_lock =
+                        std::unique_lock<std::shared_mutex>(packet_handler_quiesce_mutex);
+                } catch (const std::system_error &e) {
+                    syslog(LOG_ALERT, "Failed to quiesce packet handlers after suspend rollback failure: %s",
+                           e.what());
+                }
+            }
+            return -1;
+        }
+        suspended_event_mgrs.push_back(event_mgr_ptr);
     }
     set_packet_handlers_enabled(false);
     try {
@@ -862,9 +888,9 @@ void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket)
             std::string table_name = construct_counter_db_table_key(ifname, info.is_v6);
             mCountersDbPtr->hset(table_name, info.is_rx ? "RX" : "TX", value);
         }
-        syslog_debug(LOG_INFO, "Processing cache counter entry of %sfor downstream vlan %s",
+        syslog_debug(LOG_INFO, "Processing cache counter entry of %s for downstream vlan %s",
                      all_ifname.c_str(), downstream_ifname.c_str());
-        syslog_debug(LOG_INFO, "Skipped aggregated device counter entry of %sfor downstream vlan %s",
+        syslog_debug(LOG_INFO, "Skipped aggregated device counter entry of %s for downstream vlan %s",
                      all_skipped_ifname.c_str(), downstream_ifname.c_str());
     }
 }
