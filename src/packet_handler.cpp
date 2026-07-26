@@ -16,6 +16,8 @@
 #include "dhcp_check_profile.h"   /** to get dhcp/v6 check profile */
 #include "util.h"
 
+static constexpr int MAX_PACKETS_PER_CALLBACK = 64;
+
 /**
  * @code _increase_cache_counter(ifname, sock, type);
  * @brief helper function to increase cache counter. Simple increase of counter, no complications. In the event of
@@ -864,8 +866,13 @@ void callback_common(int fd, short event, void *arg)
     socklen_t slen = sizeof(sll);
     sock_info_t &sock_info = sock_mgr_get_sock_info(fd);
 
-    while ((buffer_sz = recvfrom(fd, sock_info.buffer, sock_info.snaplen, MSG_DONTWAIT, (struct sockaddr *)&sll, &slen)) > 0) 
-    {
+    for (int packet_count = 0; packet_count < MAX_PACKETS_PER_CALLBACK; packet_count++) {
+        slen = sizeof(sll);
+        buffer_sz = recvfrom(fd, sock_info.buffer, sock_info.snaplen, MSG_DONTWAIT,
+                             (struct sockaddr *)&sll, &slen);
+        if (buffer_sz <= 0) {
+            break;
+        }
         char ifname_buf[IF_NAMESIZE];
         if (if_indextoname(sll.sll_ifindex, ifname_buf) == NULL) {
             syslog_debug(LOG_WARNING, "if_indextoname: invalid input interface index %d %s", sll.sll_ifindex, strerror(errno));
