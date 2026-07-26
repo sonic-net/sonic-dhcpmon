@@ -71,10 +71,6 @@ void event_mgr::del_all_events(const std::string &tag)
     int count = 0;
     const auto tagged_events = this->event_map.find(tag);
     if (tagged_events == this->event_map.end()) {
-        if (!tag.empty()) {
-            syslog(LOG_WARNING, "event_mgr: Cannot delete unknown tag %s for %s",
-                   tag.c_str(), this->name.c_str());
-        }
         return;
     }
     auto all_events = this->event_map.find("");
