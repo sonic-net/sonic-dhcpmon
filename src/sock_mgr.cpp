@@ -707,9 +707,13 @@ bool sock_mgr_all_cache_counters_initialized(const std::string &ifname)
     return true;
 }
 
-socket_counters_t sock_mgr_copy_cache_counters()
+socket_counters_t sock_mgr_copy_cache_counters(const counter_state_write_lock &counter_lock)
 {
     socket_counters_t counters_by_socket;
+    if (!counter_lock.owns_lock()) {
+        syslog(LOG_ALERT, "Cannot copy DHCP counters without the counter-state writer lock");
+        return counters_by_socket;
+    }
     for (const auto &[sock, info] : sock_map) {
         counters_by_socket.emplace(sock, info.all_counters);
     }

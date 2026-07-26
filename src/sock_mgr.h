@@ -137,7 +137,7 @@ bool sock_mgr_all_cache_counters_initialized(const std::string &ifname);
 /** Write a previously locked, immutable cache-counter snapshot */
 void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket);
 
-/** Copy cache counters for all sockets; caller must hold counter_state_write_lock */
-socket_counters_t sock_mgr_copy_cache_counters();
+/** Copy cache counters for all sockets while holding the supplied writer guard */
+socket_counters_t sock_mgr_copy_cache_counters(const counter_state_write_lock &counter_lock);
 
 #endif /* SOCKET_MANAGER_H_ */

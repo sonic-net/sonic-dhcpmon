@@ -455,7 +455,7 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
                 return;
             }
         }
-        counters_by_socket = sock_mgr_copy_cache_counters();
+        counters_by_socket = sock_mgr_copy_cache_counters(counter_lock);
     }
     last_update_time = std::chrono::steady_clock::now();
     sock_mgr_update_db_counters(counters_by_socket);
