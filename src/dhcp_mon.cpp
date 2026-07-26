@@ -470,6 +470,7 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
 
     if (health_reset_pending.exchange(false)) {
+        std::unique_lock<std::shared_mutex> counter_lock(packet_handler_quiesce_mutex);
         reset_dhcp_relay_health_state(agg_dev_all);
     }
 
@@ -486,6 +487,9 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
     if (topology_refresh_pending && subscribers_available) {
         sock_mgr_suspend_packet_handler();
         int result = dhcp_mon_reconcile_topology();
+        if (result == 0) {
+            reset_dhcp_relay_health_state(agg_dev_all);
+        }
         if (sock_mgr_resume_packet_handler() < 0) {
             syslog(LOG_ALERT, "Failed to resume packet handlers after topology refresh");
             dhcp_mon_stop();
@@ -498,7 +502,6 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
             if (result != 0) {
                 return;
             }
-            reset_dhcp_relay_health_state(agg_dev_all);
             syslog(LOG_INFO, "Refreshed DHCP interface membership from CONFIG_DB");
             return;
         }
