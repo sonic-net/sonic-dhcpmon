@@ -16,8 +16,8 @@
 #include <system_error>
 #include <sys/socket.h>
 
-#if __cplusplus < 201402L
-#error "dhcpmon counter synchronization requires C++14 or newer"
+#if __cplusplus < 201703L
+#error "dhcpmon counter synchronization requires C++17 or newer"
 #endif
 
 #include "sock_mgr.h"
@@ -93,17 +93,8 @@ counter_state_write_lock::~counter_state_write_lock()
     if (!lock.owns_lock()) {
         return;
     }
-    try {
-        lock.unlock();
-    } catch (const std::system_error &e) {
-        syslog(LOG_ALERT, "Failed to unlock DHCP counter state: %s", e.what());
-        return;
-    }
-    if (!registered_writer) {
-        return;
-    }
     bool notify = false;
-    {
+    if (registered_writer) {
         std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
         notify = counter_state_writers_pending.fetch_sub(1, std::memory_order_acq_rel) == 1;
     }
@@ -121,17 +112,16 @@ counter_state_read_lock::counter_state_read_lock()
 {
     if (counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
         try {
-            lock = std::shared_lock<std::shared_timed_mutex>(counter_state_mutex, std::try_to_lock);
+            std::shared_lock<std::shared_timed_mutex> candidate(counter_state_mutex,
+                                                                std::try_to_lock);
+            if (candidate.owns_lock() &&
+                counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+                lock = std::move(candidate);
+                return;
+            }
         } catch (const std::system_error &e) {
             syslog(LOG_ALERT, "Failed to lock DHCP counter state for packet handling: %s", e.what());
             return;
-        }
-        if (lock.owns_lock() &&
-            counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
-            return;
-        }
-        if (lock.owns_lock()) {
-            lock.unlock();
         }
     }
 
@@ -143,15 +133,15 @@ counter_state_read_lock::counter_state_read_lock()
             });
         }
         try {
-            lock = std::shared_lock<std::shared_timed_mutex>(counter_state_mutex);
+            std::shared_lock<std::shared_timed_mutex> candidate(counter_state_mutex);
+            if (counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
+                lock = std::move(candidate);
+                return;
+            }
         } catch (const std::system_error &e) {
             syslog(LOG_ALERT, "Failed to lock DHCP counter state for packet handling: %s", e.what());
             return;
         }
-        if (counter_state_writers_pending.load(std::memory_order_acquire) == 0) {
-            return;
-        }
-        lock.unlock();
     }
 }
 
