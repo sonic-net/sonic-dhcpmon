@@ -16,6 +16,7 @@
 #include "dhcp_check_profile.h"   /** to get dhcp/v6 check profile */
 #include "util.h"
 
+// Bound one callback to keep health/DB events responsive during packet bursts.
 static constexpr int MAX_PACKETS_PER_CALLBACK = 64;
 
 /**
