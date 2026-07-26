@@ -812,8 +812,14 @@ void sock_mgr_remove_cache_counters_except(const std::unordered_set<std::string>
         auto &info = entry.second;
         for (auto itr = info.all_counters.begin(); itr != info.all_counters.end();) {
             if (valid_ifnames.find(itr->first) == valid_ifnames.end()) {
-                info.all_counters_snapshot.erase(itr->first);
                 itr = info.all_counters.erase(itr);
+            } else {
+                itr++;
+            }
+        }
+        for (auto itr = info.all_counters_snapshot.begin(); itr != info.all_counters_snapshot.end();) {
+            if (valid_ifnames.find(itr->first) == valid_ifnames.end()) {
+                itr = info.all_counters_snapshot.erase(itr);
             } else {
                 itr++;
             }
