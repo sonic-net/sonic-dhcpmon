@@ -727,6 +727,7 @@ socket_counters_t sock_mgr_copy_cache_counters(const counter_state_write_lock &c
         syslog(LOG_ALERT, "Cannot copy DHCP counters without the counter-state writer lock");
         return counters_by_socket;
     }
+    counters_by_socket.reserve(sock_map.size());
     for (const auto &[sock, info] : sock_map) {
         counters_by_socket.emplace(sock, info.all_counters);
     }
