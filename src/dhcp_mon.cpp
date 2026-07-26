@@ -505,6 +505,7 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
         int result = dhcp_mon_reconcile_topology();
         if (result == 0) {
             reset_dhcp_relay_health_state(agg_dev_all);
+            sock_mgr_drain_sock_buffer();
         }
         if (sock_mgr_resume_packet_handler() < 0) {
             syslog(LOG_ALERT, "Failed to resume packet handlers after topology refresh");
