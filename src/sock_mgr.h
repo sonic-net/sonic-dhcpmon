@@ -55,11 +55,22 @@ class counter_state_write_lock
     public:
         counter_state_write_lock();
         ~counter_state_write_lock();
+        bool owns_lock() const;
         counter_state_write_lock(const counter_state_write_lock &) = delete;
         counter_state_write_lock &operator=(const counter_state_write_lock &) = delete;
 
     private:
         std::unique_lock<std::shared_mutex> lock;
+};
+
+class counter_state_read_lock
+{
+    public:
+        counter_state_read_lock();
+        bool owns_lock() const;
+
+    private:
+        std::shared_lock<std::shared_mutex> lock;
 };
 
 /** Initialize socket manager with given snaplen */
@@ -81,7 +92,7 @@ int sock_mgr_register_packet_handler();
 void sock_mgr_unregister_packet_handler();
 
 /** Temporarily suspend registered packet handlers */
-void sock_mgr_suspend_packet_handler();
+int sock_mgr_suspend_packet_handler();
 
 /** Resume registered packet handlers */
 int sock_mgr_resume_packet_handler();

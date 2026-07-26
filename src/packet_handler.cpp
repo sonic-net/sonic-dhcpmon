@@ -8,7 +8,6 @@
 #include <netinet/ether.h>
 #include <arpa/inet.h>
 #include <linux/if_packet.h>
-#include <mutex>
 
 #include "packet_handler.h"
 
@@ -860,15 +859,8 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 
 void callback_common(int fd, short event, void *arg)
 {
-    if (!packet_handlers_enabled.load(std::memory_order_acquire) ||
-        counter_state_writers_pending.load(std::memory_order_acquire) > 0) {
-        return;
-    }
-    std::shared_lock<std::shared_mutex> packet_handler_lock(packet_handler_quiesce_mutex,
-                                                            std::try_to_lock);
-    if (!packet_handler_lock.owns_lock() ||
-        !packet_handlers_enabled.load(std::memory_order_acquire) ||
-        counter_state_writers_pending.load(std::memory_order_acquire) > 0) {
+    counter_state_read_lock counter_lock;
+    if (!counter_lock.owns_lock()) {
         return;
     }
     ssize_t buffer_sz;
