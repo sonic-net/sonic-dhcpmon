@@ -185,6 +185,9 @@ std::unordered_map<int, uint32_t> dhcp_device_get_untransmitted_windows(const st
                                      (const int *)monitored_msgs, monitored_msg_sz);
 }
 
+static bool check_counter_increased(const std::string &ifname, int sock,
+                                    const int *monitored_msgs, size_t monitored_msg_cnt);
+
 /**
  * @code dhcp_device_check_positive_health(ifname);
  * @brief Check that DHCP relayed messages are being transmitted out of this interface/dev
@@ -195,12 +198,16 @@ std::unordered_map<int, uint32_t> dhcp_device_get_untransmitted_windows(const st
  */
 static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &ifname)
 {
+    bool has_activity = check_counter_increased(ifname, rx_sock,
+                                                (const int *)monitored_msgs, monitored_msg_sz) ||
+                        check_counter_increased(ifname, tx_sock,
+                                                (const int *)monitored_msgs, monitored_msg_sz);
     for (const auto &[msg_type, windows] : dhcp_device_get_untransmitted_windows(ifname)) {
         if (windows > 0) {
             return DHCP_MON_STATUS_UNHEALTHY;
         }
     }
-    return DHCP_MON_STATUS_HEALTHY;
+    return has_activity ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
