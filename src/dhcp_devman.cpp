@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 
+#include <exception>
+
 #include "dhcp_devman.h"
 
 
@@ -318,7 +320,12 @@ int dhcp_devman_init()
     agg_dev_prefix = agg_dev_all + "-";
 
     // vlan and its members, portchannel and its members are initialized regardless of whether they are in cmdline
-    dhcp_devman_refresh_mappings();
+    try {
+        dhcp_devman_refresh_mappings();
+    } catch (const std::exception &e) {
+        syslog(LOG_ALERT, "Failed to initialize DHCP interface mappings: %s", e.what());
+        return -1;
+    }
 
     syslog(LOG_INFO, "Dhcp device manager initialized successfully");
 
