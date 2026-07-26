@@ -70,7 +70,7 @@ std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table>
     mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
 
-static void config_update_callback(evutil_socket_t fd, short event, void *arg)
+static void config_update_callback(evutil_socket_t, short, void *arg)
 {
     auto *subscriber = static_cast<swss::SubscriberStateTable *>(arg);
     try {
@@ -511,13 +511,8 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
             dhcp_mon_stop();
             return;
         }
-        if (result == 1) {
-            topology_refresh_pending = true;
-        } else {
-            topology_refresh_pending = result < 0;
-            if (result != 0) {
-                return;
-            }
+        topology_refresh_pending = result != 0;
+        if (result == 0) {
             syslog(LOG_INFO, "Refreshed DHCP interface membership from CONFIG_DB");
             return;
         }
@@ -656,6 +651,10 @@ static int dhcp_mon_reconcile_topology()
 {
     if (std::this_thread::get_id() != main_thread_id) {
         syslog(LOG_ALERT, "Topology reconciliation must run on the main event-loop thread");
+        return -1;
+    }
+    if (packet_handlers_enabled.load(std::memory_order_acquire)) {
+        syslog(LOG_ALERT, "Topology reconciliation requires suspended packet handlers");
         return -1;
     }
 
