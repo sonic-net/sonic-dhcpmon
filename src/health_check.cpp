@@ -4,6 +4,8 @@
  */
 
 #include <syslog.h>
+#include <algorithm>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -201,6 +203,15 @@ static dhcp_mon_state_t state_data[] = {
 
 static size_t state_data_sz = sizeof(state_data) / sizeof(*state_data);
 
+static void increment_unhealthy_count(dhcp_mon_state_t &state)
+{
+    int64_t saturation = dhcp_unhealthy_max_count < 0 ? 1 :
+                         static_cast<int64_t>(dhcp_unhealthy_max_count) + 1;
+    if (state.count < saturation) {
+        state.count++;
+    }
+}
+
 void check_dhcp_relay_health()
 {
     syslog_debug(LOG_INFO, "Checking DHCP relay health");
@@ -209,8 +220,11 @@ void check_dhcp_relay_health()
         dhcp_mon_status_t dhcp_mon_status = state_data[i].check_health();
         switch (dhcp_mon_status) {
             case DHCP_MON_STATUS_UNHEALTHY:
-                if (++state_data[i].count > dhcp_unhealthy_max_count && !state_data[i].reported) {
-                    int duration = state_data[i].count * window_interval_sec;
+                increment_unhealthy_count(state_data[i]);
+                if (state_data[i].count > dhcp_unhealthy_max_count && !state_data[i].reported) {
+                    int64_t duration_value = state_data[i].count * window_interval_sec;
+                    int duration = static_cast<int>(std::min(
+                        duration_value, static_cast<int64_t>(std::numeric_limits<int>::max())));
                 
                     if (state_data[i].alert) {
                         state_data[i].alert(duration);
@@ -226,8 +240,8 @@ void check_dhcp_relay_health()
                 state_data[i].reported = false;
                 break;
             case DHCP_MON_STATUS_INDETERMINATE:
-                if (state_data[i].count) {
-                    state_data[i].count++;
+                if (state_data[i].count && !state_data[i].reported) {
+                    increment_unhealthy_count(state_data[i]);
                 }
                 break;
             default:

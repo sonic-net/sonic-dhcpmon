@@ -16,7 +16,7 @@ typedef struct
     dhcp_mon_status_t (*check_health)();           /** check function */
     void (*alert)(int duration);                   /** alert function when check failed */
     void (*log)(int duration);                     /** log function when check passed */
-    int count;                                     /** count in the number of unhealthy checks */
+    int64_t count;                                 /** count in the number of unhealthy checks */
     bool reported;                                 /** whether the current unhealthy episode was reported */
 } dhcp_mon_state_t;
 
