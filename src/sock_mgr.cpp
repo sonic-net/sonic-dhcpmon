@@ -707,17 +707,27 @@ bool sock_mgr_all_cache_counters_initialized(const std::string &ifname)
     return true;
 }
 
-void sock_mgr_update_db_counters()
+socket_counters_t sock_mgr_copy_cache_counters()
+{
+    socket_counters_t counters_by_socket;
+    for (const auto &[sock, info] : sock_map) {
+        counters_by_socket.emplace(sock, info.all_counters);
+    }
+    return counters_by_socket;
+}
+
+void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket)
 {
     syslog_debug(LOG_INFO, "Updating all cache counters to DB counters");
 
-    for (const auto &[sock, info] : sock_map) {
+    for (const auto &[sock, all_counters] : counters_by_socket) {
+        const sock_info_t &info = sock_mgr_get_sock_info(sock);
         syslog_debug(LOG_INFO, "Start updating socket %d %s DB counter from cache counter", sock, info.name);
         int msg_type_count = info.is_v6 ? DHCPV6_MESSAGE_TYPE_COUNT : DHCP_MESSAGE_TYPE_COUNT;
         const std::string *msg_type_name = info.is_v6 ? db_counter_name_v6 : db_counter_name;
         std::string all_ifname;
         std::string all_skipped_ifname;
-        for (const auto &[ifname, counter] : info.all_counters) {
+        for (const auto &[ifname, counter] : all_counters) {
             if (is_agg_counter(ifname) == true) {
                 all_skipped_ifname += ifname + ", ";
                 continue;
@@ -732,4 +742,9 @@ void sock_mgr_update_db_counters()
         syslog_debug(LOG_INFO, "Skipped aggregated device counter entry of %sfor downstream vlan %s",
                      all_skipped_ifname.c_str(), downstream_ifname.c_str());
     }
+}
+
+void sock_mgr_update_db_counters()
+{
+    sock_mgr_update_db_counters(sock_mgr_copy_cache_counters());
 }
