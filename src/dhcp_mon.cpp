@@ -493,6 +493,7 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
             if (result != 0) {
                 return;
             }
+            reset_dhcp_relay_health_state(agg_dev_all);
             syslog(LOG_INFO, "Refreshed DHCP interface membership from CONFIG_DB");
             return;
         }
