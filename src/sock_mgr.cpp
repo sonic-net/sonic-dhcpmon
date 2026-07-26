@@ -605,7 +605,8 @@ void sock_mgr_init_cache_counters(const std::string &ifname, uint8_t dhcp_messag
 
 bool sock_mgr_all_cache_counters_initialized(const std::string &ifname)
 {
-    for (const auto &[sock, info] : sock_map) {
+    for (const auto &entry : sock_map) {
+        const auto &info = entry.second;
         auto itr = info.all_counters.find(ifname);
         if (itr == info.all_counters.end()) {
             return false;
@@ -616,7 +617,8 @@ bool sock_mgr_all_cache_counters_initialized(const std::string &ifname)
 
 void sock_mgr_remove_cache_counters_except(const std::unordered_set<std::string> &valid_ifnames)
 {
-    for (auto &[sock, info] : sock_map) {
+    for (auto &entry : sock_map) {
+        auto &info = entry.second;
         for (auto itr = info.all_counters.begin(); itr != info.all_counters.end();) {
             if (valid_ifnames.find(itr->first) == valid_ifnames.end()) {
                 info.all_counters_snapshot.erase(itr->first);
