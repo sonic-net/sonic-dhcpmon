@@ -8,6 +8,8 @@
 
 #include "dhcp_device.h"
 
+#include <string>
+
 #include <swss/events.h>
 
 /** DHCP device/interface state */
@@ -37,7 +39,7 @@ extern int dhcp_unhealthy_max_count;
  */
 void check_dhcp_relay_health();
 
-/** Reset all relay health persistence, report state, and flow watermarks */
+/** Reset relay report state globally and flow watermarks for the given interface */
 void reset_dhcp_relay_health_state(const std::string &ifname);
 
 #endif // HEALTH_CHECK_H
