@@ -23,6 +23,7 @@
 
 typedef std::unordered_map<uint8_t, uint64_t> counter_t;
 typedef std::unordered_map<std::string, counter_t> all_counters_t;
+typedef std::unordered_map<int, all_counters_t> socket_counters_t;
 
 /** struct for socket information */
 typedef struct {
@@ -147,5 +148,9 @@ void sock_mgr_remove_cache_counters_except(const std::unordered_set<std::string>
 
 /** Update database counters from cache counters for all sockets */
 void sock_mgr_update_db_counters();
+void sock_mgr_update_db_counters(const socket_counters_t &counters_by_socket);
+
+/** Copy cache counters for all sockets */
+socket_counters_t sock_mgr_copy_cache_counters();
 
 #endif /* SOCKET_MANAGER_H_ */
