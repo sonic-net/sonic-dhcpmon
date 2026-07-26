@@ -214,7 +214,7 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
     syslog(LOG_INFO, "Received signal: %s", strsignal(fd));
 
     {
-        counter_state_write_lock counter_lock;
+        counter_state_write_lock counter_lock(std::try_to_lock);
         if (counter_lock.owns_lock()) {
             dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT);
             dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT_V6);

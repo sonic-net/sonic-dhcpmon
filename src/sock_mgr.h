@@ -45,13 +45,11 @@ typedef struct {
 /** sock file descriptors, serve as the identifier of all related information described in sock_info_t */
 extern int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
 
-extern std::shared_timed_mutex counter_state_mutex;
-extern std::atomic<unsigned int> counter_state_writers_pending;
-
 class counter_state_write_lock
 {
     public:
         counter_state_write_lock();
+        explicit counter_state_write_lock(std::try_to_lock_t);
         ~counter_state_write_lock();
         bool owns_lock() const;
         counter_state_write_lock(const counter_state_write_lock &) = delete;
@@ -59,6 +57,7 @@ class counter_state_write_lock
 
     private:
         std::unique_lock<std::shared_timed_mutex> lock;
+        bool registered_writer = false;
 };
 
 class counter_state_read_lock

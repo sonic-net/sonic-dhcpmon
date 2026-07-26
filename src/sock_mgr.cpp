@@ -43,8 +43,8 @@ static const char cache_counter_updater_tag[] = "CacheCounterUpdater";
 /* sock fd to sock_info mapping */
 std::unordered_map<int, sock_info_t> sock_map;
 
-std::shared_timed_mutex counter_state_mutex;
-std::atomic<unsigned int> counter_state_writers_pending{0};
+static std::shared_timed_mutex counter_state_mutex;
+static std::atomic<unsigned int> counter_state_writers_pending{0};
 static std::mutex counter_state_wait_mutex;
 static std::condition_variable counter_state_wait_cv;
 
@@ -57,6 +57,7 @@ counter_state_write_lock::counter_state_write_lock()
     {
         std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
         counter_state_writers_pending.fetch_add(1, std::memory_order_acq_rel);
+        registered_writer = true;
     }
     try {
         lock = std::unique_lock<std::shared_timed_mutex>(counter_state_mutex);
@@ -69,7 +70,17 @@ counter_state_write_lock::counter_state_write_lock()
         if (notify) {
             counter_state_wait_cv.notify_all();
         }
+        registered_writer = false;
         syslog(LOG_ALERT, "Failed to lock DHCP counter state: %s", e.what());
+    }
+}
+
+counter_state_write_lock::counter_state_write_lock(std::try_to_lock_t)
+{
+    try {
+        lock = std::unique_lock<std::shared_timed_mutex>(counter_state_mutex, std::try_to_lock);
+    } catch (const std::system_error &e) {
+        syslog(LOG_ALERT, "Failed to try-lock DHCP counter state: %s", e.what());
     }
 }
 
@@ -79,6 +90,9 @@ counter_state_write_lock::~counter_state_write_lock()
         return;
     }
     lock.unlock();
+    if (!registered_writer) {
+        return;
+    }
     bool notify = false;
     {
         std::lock_guard<std::mutex> wait_lock(counter_state_wait_mutex);
