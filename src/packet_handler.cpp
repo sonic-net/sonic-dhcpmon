@@ -859,6 +859,13 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 
 void callback_common(int fd, short event, void *arg)
 {
+    if (!packet_handlers_enabled.load(std::memory_order_acquire)) {
+        return;
+    }
+    std::shared_lock<std::shared_mutex> packet_handler_lock(packet_handler_quiesce_mutex);
+    if (!packet_handlers_enabled.load(std::memory_order_acquire)) {
+        return;
+    }
     ssize_t buffer_sz;
     struct sockaddr_ll sll;
     socklen_t slen = sizeof(sll);
