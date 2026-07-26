@@ -96,7 +96,13 @@ void event_mgr::suspend_all_events(const std::string &tag)
                this->name.c_str());
         return;
     }
-    for (const auto &event : this->event_map[tag]) {
+    const auto tagged_events = this->event_map.find(tag);
+    if (tagged_events == this->event_map.end()) {
+        syslog(LOG_ALERT, "event_mgr: Cannot suspend unknown tag %s for %s",
+               tag.c_str(), this->name.c_str());
+        return;
+    }
+    for (const auto &event : tagged_events->second) {
         event_del(event);
     }
 }
@@ -108,7 +114,13 @@ int event_mgr::resume_all_events(const std::string &tag)
                this->name.c_str());
         return -1;
     }
-    for (const auto &event : this->event_map[tag]) {
+    const auto tagged_events = this->event_map.find(tag);
+    if (tagged_events == this->event_map.end()) {
+        syslog(LOG_ALERT, "event_mgr: Cannot resume unknown tag %s for %s",
+               tag.c_str(), this->name.c_str());
+        return -1;
+    }
+    for (const auto &event : tagged_events->second) {
         if (event_get_fd(event) < 0) {
             syslog(LOG_ALERT, "event_mgr: Cannot resume non-fd event with tag %s for %s",
                    tag.c_str(), this->name.c_str());
