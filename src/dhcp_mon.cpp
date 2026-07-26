@@ -533,26 +533,31 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received db update signal");
     syslog_debug(LOG_INFO, "Sync cache counter to DB counter");
-    counter_state_write_lock counter_lock;
-    if (!counter_lock.owns_lock()) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(db_sync_mutex);
-    // If there is clear counter going on and its been longer than expected
-    // consider the clear counter operation failed so we don't block db update forever
-    if (!sock_mgr_pause_write_cache_to_db_all_cleared() && last_update_time != default_time_point) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_update_time);
-        if (elapsed.count() >= clear_counter_timeout) {
-            syslog(LOG_WARNING, "Clear counter going on for too long, abort clear counter");
-            sock_mgr_clear_pause_write_cache_to_db();
-        } else {
-            syslog(LOG_INFO, "Clear counter is ongoing, skip syncing write cache counter to DB counter");
+    socket_counters_t counters_by_socket;
+    std::unique_lock<std::mutex> lock;
+    {
+        counter_state_write_lock counter_lock;
+        if (!counter_lock.owns_lock()) {
             return;
         }
+        lock = std::unique_lock<std::mutex>(db_sync_mutex);
+        // If there is clear counter going on and its been longer than expected
+        // consider the clear counter operation failed so we don't block db update forever
+        if (!sock_mgr_pause_write_cache_to_db_all_cleared() && last_update_time != default_time_point) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_update_time);
+            if (elapsed.count() >= clear_counter_timeout) {
+                syslog(LOG_WARNING, "Clear counter going on for too long, abort clear counter");
+                sock_mgr_clear_pause_write_cache_to_db();
+            } else {
+                syslog(LOG_INFO, "Clear counter is ongoing, skip syncing write cache counter to DB counter");
+                return;
+            }
+        }
+        counters_by_socket = sock_mgr_copy_cache_counters();
     }
     last_update_time = std::chrono::steady_clock::now();
-    sock_mgr_update_db_counters();
+    sock_mgr_update_db_counters(counters_by_socket);
     cleanup_stale_db_counters();
     syslog_debug(LOG_INFO, "Successfully synced cache counter to DB counter");
 }
