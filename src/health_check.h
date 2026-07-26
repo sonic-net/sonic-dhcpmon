@@ -8,6 +8,7 @@
 
 #include "dhcp_device.h"
 
+#include <cstdint>
 #include <swss/events.h>
 
 /** DHCP device/interface state */
