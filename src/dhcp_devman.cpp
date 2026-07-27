@@ -331,13 +331,13 @@ static const dhcp_device_context_t *get_device_context(
     if (iter != intfs.end()) {
         return iter->second;
     }
-    const auto port_channel = portchan_map.find(ifname);
-    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
-        return get_device_context(port_channel->second, depth + 1);
-    }
     const auto vlan = vlan_map.find(ifname);
     if (vlan != vlan_map.end() && ifname != vlan->second) {
         return get_device_context(vlan->second, depth + 1);
+    }
+    const auto port_channel = portchan_map.find(ifname);
+    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
+        return get_device_context(port_channel->second, depth + 1);
     }
     return NULL;
 }
@@ -352,13 +352,13 @@ std::string dhcp_devman_get_parent_ifname(const std::string &ifname)
     if (intfs.find(ifname) != intfs.end()) {
         return "";
     }
-    const auto port_channel = portchan_map.find(ifname);
-    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
-        return port_channel->second;
-    }
     const auto vlan = vlan_map.find(ifname);
     if (vlan != vlan_map.end() && ifname != vlan->second) {
         return vlan->second;
+    }
+    const auto port_channel = portchan_map.find(ifname);
+    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
+        return port_channel->second;
     }
     return "";
 }
