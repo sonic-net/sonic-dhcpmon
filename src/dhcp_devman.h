@@ -150,6 +150,15 @@ const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &i
 std::string dhcp_devman_get_parent_ifname(const std::string &ifname);
 
 /**
+ * @brief Return the aggregate counter containing a parent's immediate children.
+ *
+ * @param parent_ifname    parent interface name
+ *
+ * @return aggregate counter name
+ */
+std::string dhcp_devman_get_child_agg_counter_ifname(const std::string &parent_ifname);
+
+/**
  * @code dhcp_devman_get_agg_counter_ifname(ifname);
  *
  * @brief find the aggregate counter for the immediate parent of a tracked interface.

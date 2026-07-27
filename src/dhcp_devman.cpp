@@ -346,7 +346,13 @@ const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &i
 std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname)
 {
     const std::string parent_ifname = dhcp_devman_get_parent_ifname(ifname);
-    return parent_ifname.empty() ? agg_dev_all : agg_dev_prefix + parent_ifname;
+    return parent_ifname.empty() ? agg_dev_all :
+           dhcp_devman_get_child_agg_counter_ifname(parent_ifname);
+}
+
+std::string dhcp_devman_get_child_agg_counter_ifname(const std::string &parent_ifname)
+{
+    return agg_dev_prefix + parent_ifname;
 }
 
 void dhcp_devman_print_all_status(dhcp_counters_type_t type)
