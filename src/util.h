@@ -216,7 +216,12 @@ inline bool is_agg_counter(const std::string &ifname)
     return ifname.compare(0, agg_dev_prefix.size(), agg_dev_prefix) == 0 || ifname == agg_dev_all;
 }
 
-/** Return the aggregate counter containing a parent's immediate children. */
+/**
+ * @code                get_agg_counter_ifname(parent_ifname);
+ * @brief               Get aggregate counter name for a parent's immediate children
+ * @param parent_ifname Parent interface name
+ * @return              Aggregate counter name
+ */
 inline std::string get_agg_counter_ifname(const std::string &parent_ifname)
 {
     return agg_dev_prefix + parent_ifname;
