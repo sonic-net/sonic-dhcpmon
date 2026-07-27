@@ -1,5 +1,5 @@
 /**
- * @file dhcp_check.cpp
+ * @file health_check.cpp
  * DHCP health check implementation
  */
 
@@ -177,47 +177,63 @@ static dhcp_mon_status_t check_per_interface_tx_health_v6()
     return DHCP_MON_STATUS_HEALTHY;
 }
 
-/** DHCP monitor state data for aggregate device for mgmt device */
+/** DHCP monitor state for management, DHCPv6 aggregate, and interface checks */
 static dhcp_mon_state_t state_data[] = {
     [0] = {
         .check_health = check_mgmt_health,
         .log = log_mgmt_error,
         .count = 0,
+        .reported = false,
     },
     [1] = {
         .check_health = check_agg_health_v6,
         .alert = alert_dhcp_relay_disparity,
         .log = log_v6_agg_error,
         .count = 0,
+        .reported = false,
     },
     [2] = {
         .check_health = check_mgmt_health_v6,
         .log = log_mgmt_error,
         .count = 0,
+        .reported = false,
     },
     [3] = {
         .check_health = check_per_interface_rx_health,
         .log = log_agg_per_interface_rx_error,
         .count = 0,
+        .reported = false,
     },
     [4] = {
         .check_health = check_per_interface_tx_health,
         .log = log_agg_per_interface_tx_error,
         .count = 0,
+        .reported = false,
     },
     [5] = {
         .check_health = check_per_interface_rx_health_v6,
         .log = log_agg_per_interface_rx_error,
         .count = 0,
+        .reported = false,
     },
     [6] = {
         .check_health = check_per_interface_tx_health_v6,
         .log = log_agg_per_interface_tx_error,
         .count = 0,
+        .reported = false,
     },
 };
 
 static size_t state_data_sz = sizeof(state_data) / sizeof(*state_data);
+
+static void increment_unhealthy_count(dhcp_mon_state_t &state)
+{
+    int64_t saturation = dhcp_unhealthy_max_count < 0 ? 1 :
+                         static_cast<int64_t>(dhcp_unhealthy_max_count) + 1;
+    if (state.count < saturation) {
+        state.count++;
+    }
+}
 
 void check_dhcp_relay_health()
 {
@@ -229,8 +245,11 @@ void check_dhcp_relay_health()
         dhcp_mon_status_t dhcp_mon_status = state_data[i].check_health();
         switch (dhcp_mon_status) {
             case DHCP_MON_STATUS_UNHEALTHY:
-                if (++state_data[i].count > dhcp_unhealthy_max_count) {
-                    int duration = state_data[i].count * window_interval_sec;
+                increment_unhealthy_count(state_data[i]);
+                if (state_data[i].count > dhcp_unhealthy_max_count && !state_data[i].reported) {
+                    int64_t duration_value = state_data[i].count * window_interval_sec;
+                    int duration = static_cast<int>(std::min(
+                        duration_value, static_cast<int64_t>(std::numeric_limits<int>::max())));
                 
                     if (state_data[i].alert) {
                         state_data[i].alert(duration);
@@ -238,14 +257,16 @@ void check_dhcp_relay_health()
                     if (state_data[i].log) {
                         state_data[i].log(duration);
                     }
+                    state_data[i].reported = true;
                 }
                 break;
             case DHCP_MON_STATUS_HEALTHY:
                 state_data[i].count = 0;
+                state_data[i].reported = false;
                 break;
             case DHCP_MON_STATUS_INDETERMINATE:
-                if (state_data[i].count) {
-                    state_data[i].count++;
+                if (state_data[i].count && !state_data[i].reported) {
+                    increment_unhealthy_count(state_data[i]);
                 }
                 break;
             default:
@@ -255,4 +276,26 @@ void check_dhcp_relay_health()
     }
 
     syslog_debug(LOG_INFO, "Completed DHCP relay health check");
+}
+
+void reset_dhcp_relay_health_state(const std::string &ifname)
+{
+    reported_disparity_v4 = false;
+    for (auto &state : state_data) {
+        state.count = 0;
+        state.reported = false;
+    }
+    dhcp_device_reset_health_state(ifname);
+}
+
+void reset_dhcp_relay_health_state(const std::string &ifname,
+                                   const std::unordered_map<uint8_t, uint64_t> &rx_counters,
+                                   const std::unordered_map<uint8_t, uint64_t> &tx_counters)
+{
+    reported_disparity_v4 = false;
+    for (auto &state : state_data) {
+        state.count = 0;
+        state.reported = false;
+    }
+    dhcp_device_reset_health_state(ifname, rx_counters, tx_counters);
 }

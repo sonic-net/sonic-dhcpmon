@@ -81,10 +81,10 @@ typedef struct
 static std::unordered_map<int, std::unordered_map<std::string,
     std::unordered_map<int, relay_flow_state_t>>> relay_flow_states;
 
-static void initialize_relay_flow_states(const std::string &ifname)
+static void initialize_relay_flow_states(const std::string &ifname,
+                                         const counter_t &rx_counters,
+                                         const counter_t &tx_counters)
 {
-    const counter_t &rx_counters = sock_mgr_get_sock_info(rx_sock).all_counters.at(ifname);
-    const counter_t &tx_counters = sock_mgr_get_sock_info(tx_sock).all_counters.at(ifname);
     for (size_t i = 0; i < monitored_msg_sz; i++) {
         int msg_type = monitored_msgs[i];
         relay_flow_states[rx_sock][ifname][msg_type] = {
@@ -93,10 +93,27 @@ static void initialize_relay_flow_states(const std::string &ifname)
     }
 }
 
-void dhcp_device_reset_health_state(const std::string &ifname)
+static void reset_relay_flow_states(const std::string &ifname,
+                                    const counter_t &rx_counters,
+                                    const counter_t &tx_counters)
 {
     relay_flow_states[rx_sock].erase(ifname);
-    initialize_relay_flow_states(ifname);
+    initialize_relay_flow_states(ifname, rx_counters, tx_counters);
+}
+
+void dhcp_device_reset_health_state(const std::string &ifname)
+{
+    reset_relay_flow_states(
+        ifname,
+        sock_mgr_get_sock_info(rx_sock).all_counters.at(ifname),
+        sock_mgr_get_sock_info(tx_sock).all_counters.at(ifname));
+}
+
+void dhcp_device_reset_health_state(const std::string &ifname,
+                                    const counter_t &rx_counters,
+                                    const counter_t &tx_counters)
+{
+    reset_relay_flow_states(ifname, rx_counters, tx_counters);
 }
 
 /**

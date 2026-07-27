@@ -250,6 +250,10 @@ std::unordered_map<int, uint32_t> dhcp_device_get_untransmitted_windows(const st
 
 /** Reset DHCPv4 relay-flow watermarks */
 void dhcp_device_reset_health_state(const std::string &ifname);
+void dhcp_device_reset_health_state(
+    const std::string &ifname,
+    const std::unordered_map<uint8_t, uint64_t> &rx_counters,
+    const std::unordered_map<uint8_t, uint64_t> &tx_counters);
 
 /**
  * @code dhcp_device_print_status(ifname, type);

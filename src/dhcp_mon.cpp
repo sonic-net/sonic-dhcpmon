@@ -41,6 +41,11 @@ static constexpr int MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC = 5;
 static constexpr int CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC = 1;
 /** Mutex lock to modify write_counter_to_db for different threads */
 static std::mutex db_sync_mutex;
+static counter_t clear_rx_baseline;
+static counter_t clear_tx_baseline;
+static bool clear_rx_baseline_valid = false;
+static bool clear_tx_baseline_valid = false;
+static bool clear_update_triggered = false;
 /** tag for db_update event */
 static const char db_update_tag[] = "DB_UPDATE";
 /** Latest timestamp of writing cache counter to COUNTERS_DB */
@@ -212,7 +217,7 @@ static void cleanup_stale_db_counters()
 static void signal_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog(LOG_INFO, "Received signal: %s", strsignal(fd));
-    
+
     dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT_V6);
 
@@ -224,7 +229,14 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
         // we need to sync cache counter from COUNTERS_DB
         syslog(LOG_INFO, "Received signal to stop writing to DB counter");
         std::lock_guard<std::mutex> lock(db_sync_mutex);
+        if (!sock_mgr_pause_write_cache_to_db_all_cleared()) {
+            syslog(LOG_WARNING, "Ignoring overlapping DHCP counter-clear request");
+            return;
+        }
         sock_mgr_pause_write_cache_to_db();
+        clear_rx_baseline_valid = false;
+        clear_tx_baseline_valid = false;
+        clear_update_triggered = false;
         syslog(LOG_INFO, "Stopped writing to DB counter");
         mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_PREFIX + downstream_ifname, "pause_write_to_db", "done");
         mStateDbPtr->hset(STATE_DB_COUNTER_UPDATE_V6_PREFIX + downstream_ifname, "pause_write_to_db", "done");
@@ -232,6 +244,12 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
     }
     if (fd == SIGUSR2) {
         syslog(LOG_INFO, "Received signal to sync DB counter to cache counter");
+        std::lock_guard<std::mutex> lock(db_sync_mutex);
+        if (sock_mgr_pause_write_cache_to_db_all_cleared() || clear_update_triggered) {
+            syslog(LOG_WARNING, "Ignoring unexpected or duplicate DHCP counter-clear recovery");
+            return;
+        }
+        clear_update_triggered = true;
         sock_mgr_trigger_cache_counter_updater();
     }
 }
@@ -261,6 +279,10 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     syslog(LOG_INFO, "Start updating %s cache counter from DB counter", sock_info.name);
 
     std::lock_guard<std::mutex> lock(db_sync_mutex);
+    if (!clear_update_triggered) {
+        syslog(LOG_WARNING, "Ignoring stale DHCP counter-clear cache update");
+        return;
+    }
 
     // can only sync db to cache counter and db updater is paused, otherwise its unexpected
     if (!sock_info.pause_write_cache_to_db) {
@@ -344,9 +366,9 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 
         updated_intfs.insert(ifname);
     }
-    syslog(LOG_INFO, "Processing DB entry of %sfor downstream vlan %s",
+    syslog(LOG_INFO, "Processing DB entry of %s for downstream vlan %s",
              all_ifname.c_str(), downstream_ifname.c_str());
-    syslog(LOG_INFO, "Skipped DB entry of %sbecause we are only interested in %s",
+    syslog(LOG_INFO, "Skipped DB entry of %s because we are only interested in %s",
              all_skipped_ifname.c_str(), downstream_ifname.c_str());
 
     // log any cache counter entry not appearing in db counter. This is highly unexpected.
@@ -359,6 +381,14 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 
     // because we dont sync agg counters, to keep data consistent, we zero out all agg counter and recalculate
     recalculate_agg_counter(all_counters);
+
+    if (sock == rx_sock) {
+        clear_rx_baseline = all_counters.at(agg_dev_all);
+        clear_rx_baseline_valid = true;
+    } else if (sock == tx_sock) {
+        clear_tx_baseline = all_counters.at(agg_dev_all);
+        clear_tx_baseline_valid = true;
+    }
 
     sock_info.pause_write_cache_to_db = false;
     syslog(LOG_INFO, "Finished updating %s cache counter from DB counter, set pause to false", sock_info.name);
@@ -373,6 +403,16 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     // for discrepency in interface between cache counter and DB counter, we dont handle it in this function
     // we leave it to db updater to handle it
     if (sock_mgr_pause_write_cache_to_db_all_cleared()) {
+        if (clear_rx_baseline_valid && clear_tx_baseline_valid) {
+            reset_dhcp_relay_health_state(
+                agg_dev_all, clear_rx_baseline, clear_tx_baseline);
+        } else {
+            syslog(LOG_WARNING, "Missing DHCPv4 counter-clear baseline, using current counters");
+            reset_dhcp_relay_health_state(agg_dev_all);
+        }
+        clear_rx_baseline_valid = false;
+        clear_tx_baseline_valid = false;
+        clear_update_triggered = false;
         syslog(LOG_INFO, "All sockets cleared pause_write_cache_to_db, start write back to DB counter from cache counter");
         main_event_mgr->activate_all_events(db_update_tag, EV_TIMEOUT);
     }
@@ -392,6 +432,7 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
+    std::lock_guard<std::mutex> lock(db_sync_mutex);
 
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
@@ -427,6 +468,9 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
         if (elapsed.count() >= clear_counter_timeout) {
             syslog(LOG_WARNING, "Clear counter going on for too long, abort clear counter");
             sock_mgr_clear_pause_write_cache_to_db();
+            clear_rx_baseline_valid = false;
+            clear_tx_baseline_valid = false;
+            clear_update_triggered = false;
         } else {
             syslog(LOG_INFO, "Clear counter is ongoing, skip syncing write cache counter to DB counter");
             return;
@@ -520,7 +564,7 @@ int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_i
     // deinitialization of counters is not our responsibility
     // cache counter will be cleanup by sock_mgr_free and the initialized db we intend to keep
     initialize_all_intf_counters();
-    dhcp_device_reset_health_state(agg_dev_all);
+    reset_dhcp_relay_health_state(agg_dev_all);
     syslog(LOG_INFO, "Initialized all counters for tracked interfaces");
 
     window_interval_sec = window_sec;
