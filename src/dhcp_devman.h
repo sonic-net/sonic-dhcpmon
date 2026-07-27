@@ -134,7 +134,7 @@ void dhcp_devman_free();
  *
  * @param ifname           interface name
  *
- * @return parent interface name, or an empty string for a root context interface
+ * @return parent interface name, or an empty string for a root or unmapped interface
  */
 std::string dhcp_devman_get_parent_ifname(const std::string &ifname);
 
@@ -152,11 +152,11 @@ const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &i
 /**
  * @code dhcp_devman_get_agg_counter_ifname(ifname);
  *
- * @brief find the aggregate counter for the immediate parent of a tracked interface.
+ * @brief find the aggregate counter updated by an interface observation.
  *
  * @param ifname           interface name
  *
- * @return aggregate counter name
+ * @return immediate-parent aggregate, or the root aggregate when no parent exists
  */
 std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname);
 
