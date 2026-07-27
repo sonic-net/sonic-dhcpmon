@@ -347,7 +347,7 @@ std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname)
 {
     const std::string parent_ifname = dhcp_devman_get_parent_ifname(ifname);
     return parent_ifname.empty() ? agg_dev_all :
-           get_child_agg_counter_ifname(parent_ifname);
+           get_agg_counter_ifname(parent_ifname);
 }
 
 void dhcp_devman_print_all_status(dhcp_counters_type_t type)

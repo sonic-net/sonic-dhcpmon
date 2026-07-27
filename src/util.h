@@ -217,7 +217,7 @@ inline bool is_agg_counter(const std::string &ifname)
 }
 
 /** Return the aggregate counter containing a parent's immediate children. */
-inline std::string get_child_agg_counter_ifname(const std::string &parent_ifname)
+inline std::string get_agg_counter_ifname(const std::string &parent_ifname)
 {
     return agg_dev_prefix + parent_ifname;
 }
