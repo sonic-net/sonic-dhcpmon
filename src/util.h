@@ -216,6 +216,12 @@ inline bool is_agg_counter(const std::string &ifname)
     return ifname.compare(0, agg_dev_prefix.size(), agg_dev_prefix) == 0 || ifname == agg_dev_all;
 }
 
+/** Return the aggregate counter containing a parent's immediate children. */
+inline std::string get_child_agg_counter_ifname(const std::string &parent_ifname)
+{
+    return agg_dev_prefix + parent_ifname;
+}
+
 /**
  * @code                contains_value(v, value);
  * @brief               Check if a vector contains a specific value

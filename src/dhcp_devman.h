@@ -128,17 +128,6 @@ int dhcp_devman_init();
 void dhcp_devman_free();
 
 /**
- * @code dhcp_devman_get_device_context(ifname);
- *
- * @brief find device context, if its physical interface, will query vlan_map and portchannel_map first
- *
- * @param ifname           interface name
- *
- * @return pointer to device (interface) context if found, NULL otherwise
- */
-const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &ifname);
-
-/**
  * @code dhcp_devman_get_parent_ifname(ifname);
  *
  * @brief find the immediate parent interface of a tracked interface.
@@ -150,13 +139,15 @@ const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &i
 std::string dhcp_devman_get_parent_ifname(const std::string &ifname);
 
 /**
- * @brief Return the aggregate counter containing a parent's immediate children.
+ * @code dhcp_devman_get_device_context(ifname);
  *
- * @param parent_ifname    parent interface name
+ * @brief find device context by following the interface hierarchy.
  *
- * @return aggregate counter name
+ * @param ifname           interface name
+ *
+ * @return pointer to device (interface) context if found, NULL otherwise
  */
-std::string dhcp_devman_get_child_agg_counter_ifname(const std::string &parent_ifname);
+const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &ifname);
 
 /**
  * @code dhcp_devman_get_agg_counter_ifname(ifname);

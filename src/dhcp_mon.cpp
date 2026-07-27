@@ -467,7 +467,7 @@ static void initialize_all_intf_counters()
         }
         initialize_all_counters(vlan);
         sock_mgr_init_cache_counters(
-            dhcp_devman_get_child_agg_counter_ifname(vlan),
+            get_child_agg_counter_ifname(vlan),
             DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
     }
 
@@ -477,7 +477,7 @@ static void initialize_all_intf_counters()
         }
         initialize_all_counters(portchan);
         sock_mgr_init_cache_counters(
-            dhcp_devman_get_child_agg_counter_ifname(portchan),
+            get_child_agg_counter_ifname(portchan),
             DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
     }
 
