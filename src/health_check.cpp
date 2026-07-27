@@ -4,6 +4,8 @@
  */
 
 #include <syslog.h>
+#include <algorithm>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,10 +29,7 @@ extern std::string agg_dev_prefix;
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
-static dhcp_mon_status_t check_agg_health()
-{
-    return dhcp_device_get_status(agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE);
-}
+static bool reported_disparity_v4 = false;
 
 static dhcp_mon_status_t check_mgmt_health()
 {
@@ -46,10 +45,43 @@ static void alert_dhcp_relay_disparity(int duration)
     event_publish(g_events_handle, "dhcp-relay-disparity", &params);
 }
 
-static void log_agg_error(int duration)
+static void log_v4_agg_error(int duration)
 {
-    syslog(LOG_ALERT, "dhcpmon detected DHCPv4/v6 packets received but none transmitted. Duration: %d (sec) for intf: %s",
+    syslog(LOG_ALERT, "dhcpmon detected DHCPv4 receive activity without a corresponding transmit. Duration: %d (sec) for intf: %s",
            duration, agg_dev_all.c_str());
+}
+
+static void log_v6_agg_error(int duration)
+{
+    syslog(LOG_ALERT, "dhcpmon detected DHCPv6 packets received but none transmitted. Duration: %d (sec) for intf: %s",
+           duration, agg_dev_all.c_str());
+}
+
+static void check_relay_disparity()
+{
+    auto windows_by_type = dhcp_device_get_untransmitted_windows(agg_dev_all);
+    uint32_t report_windows = 0;
+    bool has_pending = false;
+
+    for (const auto &entry : windows_by_type) {
+        uint32_t windows = entry.second;
+        has_pending |= windows > 0;
+        if (static_cast<int64_t>(windows) > dhcp_unhealthy_max_count) {
+            report_windows = std::max(report_windows, windows);
+        }
+    }
+
+    if (!has_pending) {
+        reported_disparity_v4 = false;
+    }
+    if (report_windows > 0 && !reported_disparity_v4) {
+        int64_t duration_value = static_cast<int64_t>(report_windows) * window_interval_sec;
+        int duration = static_cast<int>(std::min(
+            duration_value, static_cast<int64_t>(std::numeric_limits<int>::max())));
+        alert_dhcp_relay_disparity(duration);
+        log_v4_agg_error(duration);
+        reported_disparity_v4 = true;
+    }
 }
 
 static void log_mgmt_error(int duration)
@@ -148,43 +180,37 @@ static dhcp_mon_status_t check_per_interface_tx_health_v6()
 /** DHCP monitor state data for aggregate device for mgmt device */
 static dhcp_mon_state_t state_data[] = {
     [0] = {
-        .check_health = check_agg_health,
-        .alert = alert_dhcp_relay_disparity,
-        .log = log_agg_error,
-        .count = 0,
-    },
-    [1] = {
         .check_health = check_mgmt_health,
         .log = log_mgmt_error,
         .count = 0,
     },
-    [2] = {
+    [1] = {
         .check_health = check_agg_health_v6,
         .alert = alert_dhcp_relay_disparity,
-        .log = log_agg_error,
+        .log = log_v6_agg_error,
         .count = 0,
     },
-    [3] = {
+    [2] = {
         .check_health = check_mgmt_health_v6,
         .log = log_mgmt_error,
         .count = 0,
     },
-    [4] = {
+    [3] = {
         .check_health = check_per_interface_rx_health,
         .log = log_agg_per_interface_rx_error,
         .count = 0,
     },
-    [5] = {
+    [4] = {
         .check_health = check_per_interface_tx_health,
         .log = log_agg_per_interface_tx_error,
         .count = 0,
     },
-    [6] = {
+    [5] = {
         .check_health = check_per_interface_rx_health_v6,
         .log = log_agg_per_interface_rx_error,
         .count = 0,
     },
-    [7] = {
+    [6] = {
         .check_health = check_per_interface_tx_health_v6,
         .log = log_agg_per_interface_tx_error,
         .count = 0,
@@ -196,6 +222,8 @@ static size_t state_data_sz = sizeof(state_data) / sizeof(*state_data);
 void check_dhcp_relay_health()
 {
     syslog_debug(LOG_INFO, "Checking DHCP relay health");
+
+    check_relay_disparity();
 
     for (uint8_t i = 0; i < state_data_sz; i++) {
         dhcp_mon_status_t dhcp_mon_status = state_data[i].check_health();
