@@ -180,22 +180,9 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
 
 bool dhcp_devman_is_tracked_interface(const std::string &ifname)
 {
-    auto itr = intfs.find(ifname);
-    if (itr != intfs.end()) {
-        return true;
-    }
-    auto vlan_itr = vlan_map.find(ifname);
-    if (vlan_itr != vlan_map.end()) {
-        return true;
-    }
-    auto portchan_itr = portchan_map.find(ifname);
-    if (portchan_itr != portchan_map.end()) {
-        return true;
-    }
-    if (ifname == mgmt_ifname) {
-        return true;
-    }
-    return false;
+    return intfs.find(ifname) != intfs.end() ||
+           !dhcp_devman_get_parent_ifname(ifname).empty() ||
+           ifname == mgmt_ifname;
 }
 
 /**
@@ -320,33 +307,6 @@ void dhcp_devman_free()
 
 static constexpr unsigned int MAX_CONTEXT_DEPTH = 3;
 
-static const dhcp_device_context_t *get_device_context(
-    const std::string &ifname, unsigned int depth)
-{
-    if (depth > MAX_CONTEXT_DEPTH) {
-        syslog_debug(LOG_WARNING, "Exceeded interface membership depth at %s", ifname.c_str());
-        return NULL;
-    }
-    const auto iter = intfs.find(ifname);
-    if (iter != intfs.end()) {
-        return iter->second;
-    }
-    const auto vlan = vlan_map.find(ifname);
-    if (vlan != vlan_map.end() && ifname != vlan->second) {
-        return get_device_context(vlan->second, depth + 1);
-    }
-    const auto port_channel = portchan_map.find(ifname);
-    if (port_channel != portchan_map.end() && ifname != port_channel->second) {
-        return get_device_context(port_channel->second, depth + 1);
-    }
-    return NULL;
-}
-
-const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &ifname)
-{
-    return get_device_context(ifname, 0);
-}
-
 std::string dhcp_devman_get_parent_ifname(const std::string &ifname)
 {
     if (intfs.find(ifname) != intfs.end()) {
@@ -361,6 +321,26 @@ std::string dhcp_devman_get_parent_ifname(const std::string &ifname)
         return port_channel->second;
     }
     return "";
+}
+
+static const dhcp_device_context_t *get_device_context(
+    const std::string &ifname, unsigned int depth)
+{
+    if (depth > MAX_CONTEXT_DEPTH) {
+        syslog_debug(LOG_WARNING, "Exceeded interface membership depth at %s", ifname.c_str());
+        return NULL;
+    }
+    const auto iter = intfs.find(ifname);
+    if (iter != intfs.end()) {
+        return iter->second;
+    }
+    const std::string parent_ifname = dhcp_devman_get_parent_ifname(ifname);
+    return parent_ifname.empty() ? NULL : get_device_context(parent_ifname, depth + 1);
+}
+
+const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &ifname)
+{
+    return get_device_context(ifname, 0);
 }
 
 std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname)
