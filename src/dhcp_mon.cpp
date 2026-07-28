@@ -125,21 +125,21 @@ static bool db_counters_initialized(const std::string &ifname)
 
     table_name = construct_counter_db_table_key(ifname, false);
     auto rx_v4 = mCountersDbPtr->hget(table_name, "RX");
-    if (rx_v4 == nullptr || rx_v4->empty()) {
+    if (rx_v4 == NULL || rx_v4->empty()) {
         return false;
     }
     auto tx_v4 = mCountersDbPtr->hget(table_name, "TX");
-    if (tx_v4 == nullptr || tx_v4->empty()) {
+    if (tx_v4 == NULL || tx_v4->empty()) {
         return false;
     }
 
     table_name = construct_counter_db_table_key(ifname, true);
     auto rx_v6 = mCountersDbPtr->hget(table_name, "RX");
-    if (rx_v6 == nullptr || rx_v6->empty()) {
+    if (rx_v6 == NULL || rx_v6->empty()) {
         return false;
     }
     auto tx_v6 = mCountersDbPtr->hget(table_name, "TX");
-    if (tx_v6 == nullptr || tx_v6->empty()) {
+    if (tx_v6 == NULL || tx_v6->empty()) {
         return false;
     }
 
