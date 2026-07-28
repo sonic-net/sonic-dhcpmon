@@ -57,14 +57,6 @@ static const dhcpv6_message_type_t monitored_v6_forward_rx_msgs[] = {
     DHCPV6_MESSAGE_TYPE_RELAY_FORW
 };
 
-static const dhcpv6_message_type_t monitored_v6_forward_tx_msgs[] = {
-    DHCPV6_MESSAGE_TYPE_RELAY_FORW
-};
-
-static const dhcpv6_message_type_t monitored_v6_reply_rx_msgs[] = {
-    DHCPV6_MESSAGE_TYPE_RELAY_REPL
-};
-
 static const dhcpv6_message_type_t monitored_v6_reply_tx_msgs[] = {
     DHCPV6_MESSAGE_TYPE_ADVERTISE,
     DHCPV6_MESSAGE_TYPE_REPLY,
@@ -119,6 +111,21 @@ static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock
 }
 
 /**
+ * @code get_counter_delta(ifname, sock, msg_type);
+ * @brief Get the increase in one message-type counter since the last snapshot.
+ * @param ifname interface name
+ * @param sock socket containing the counter
+ * @param msg_type message type
+ * @return counter increase since the last snapshot
+ */
+static uint64_t get_counter_delta(const std::string &ifname, int sock, int msg_type)
+{
+    const sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+    return sock_info.all_counters.at(ifname).at(msg_type) -
+           sock_info.all_counters_snapshot.at(ifname).at(msg_type);
+}
+
+/**
  * @code check_counter_increased(ifname, sock, monitored_msgs, monitored_msg_cnt);
  *
  * @brief Check if the counter for given message types has increased
@@ -132,13 +139,9 @@ static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock
  */
 static bool check_counter_increased(const std::string &ifname, int sock, const int *monitored_msgs, size_t monitored_msg_cnt)
 {
-    const sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
-    const counter_t &counters = sock_info.all_counters.at(ifname);
-    const counter_t &counters_snapshot = sock_info.all_counters_snapshot.at(ifname);
-
     // true if any counter has increased
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
-        if (counters.at(monitored_msgs[i]) > counters_snapshot.at(monitored_msgs[i])) {
+        if (get_counter_delta(ifname, sock, monitored_msgs[i]) > 0) {
             return true;
         }
     }
@@ -169,12 +172,8 @@ static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string 
     const bool forward_rx = check_counter_increased(
         ifname, rx_sock_v6, (const int *)monitored_v6_forward_rx_msgs,
         sizeof(monitored_v6_forward_rx_msgs) / sizeof(*monitored_v6_forward_rx_msgs));
-    const bool forward_tx = check_counter_increased(
-        ifname, tx_sock_v6, (const int *)monitored_v6_forward_tx_msgs,
-        sizeof(monitored_v6_forward_tx_msgs) / sizeof(*monitored_v6_forward_tx_msgs));
-    const bool reply_rx = check_counter_increased(
-        ifname, rx_sock_v6, (const int *)monitored_v6_reply_rx_msgs,
-        sizeof(monitored_v6_reply_rx_msgs) / sizeof(*monitored_v6_reply_rx_msgs));
+    const bool forward_tx = get_counter_delta(ifname, tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW) > 0;
+    const bool reply_rx = get_counter_delta(ifname, rx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_REPL) > 0;
     const bool reply_tx = check_counter_increased(
         ifname, tx_sock_v6, (const int *)monitored_v6_reply_tx_msgs,
         sizeof(monitored_v6_reply_tx_msgs) / sizeof(*monitored_v6_reply_tx_msgs));
