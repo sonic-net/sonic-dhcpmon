@@ -119,7 +119,6 @@ static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &if
  */
 static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &)
 {
-    // Client and relay DHCPv6 message types differ across the relay boundary.
     return DHCP_MON_STATUS_INDETERMINATE;
 }
 
