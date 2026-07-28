@@ -51,6 +51,26 @@ const dhcpv6_message_type_t monitored_v6_msgs[] = {
 
 uint8_t monitored_v6_msg_sz = sizeof(monitored_v6_msgs) / sizeof(*monitored_v6_msgs);
 
+static const dhcpv6_message_type_t relay_forward_rx_msgs[] = {
+    DHCPV6_MESSAGE_TYPE_SOLICIT,
+    DHCPV6_MESSAGE_TYPE_REQUEST,
+    DHCPV6_MESSAGE_TYPE_RELAY_FORW
+};
+
+static const dhcpv6_message_type_t relay_forward_tx_msgs[] = {
+    DHCPV6_MESSAGE_TYPE_RELAY_FORW
+};
+
+static const dhcpv6_message_type_t relay_reply_rx_msgs[] = {
+    DHCPV6_MESSAGE_TYPE_RELAY_REPL
+};
+
+static const dhcpv6_message_type_t relay_reply_tx_msgs[] = {
+    DHCPV6_MESSAGE_TYPE_ADVERTISE,
+    DHCPV6_MESSAGE_TYPE_REPLY,
+    DHCPV6_MESSAGE_TYPE_RELAY_REPL
+};
+
 const char *intf_type_name[DHCP_DEVICE_INTF_TYPE_COUNT] = {
     [DHCP_DEVICE_INTF_TYPE_UPLINK] =  "uplink (north)",
     [DHCP_DEVICE_INTF_TYPE_DOWNLINK] = "downlink (south)",
@@ -113,16 +133,6 @@ static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &if
 }
 
 /**
- * @code dhcp_device_check_positive_health_v6();
- * @brief Same-message-type RX/TX comparison is not valid across the DHCPv6 relay boundary.
- * @return DHCP_MON_STATUS_INDETERMINATE
- */
-static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &)
-{
-    return DHCP_MON_STATUS_INDETERMINATE;
-}
-
-/**
  * @code check_counter_increased(ifname, sock, monitored_msgs, monitored_msg_cnt);
  *
  * @brief Check if the counter for given message types has increased
@@ -147,6 +157,33 @@ static bool check_counter_increased(const std::string &ifname, int sock, const i
         }
     }
     return false;
+}
+
+/**
+ * @code dhcp_device_check_positive_health_v6(ifname);
+ * @brief Check that DHCPv6 client or relay input produces the corresponding transformed relay output.
+ * @param ifname interface name
+ * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ */
+static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &ifname)
+{
+    const bool forward_rx = check_counter_increased(
+        ifname, rx_sock_v6, (const int *)relay_forward_rx_msgs,
+        sizeof(relay_forward_rx_msgs) / sizeof(*relay_forward_rx_msgs));
+    const bool forward_tx = check_counter_increased(
+        ifname, tx_sock_v6, (const int *)relay_forward_tx_msgs,
+        sizeof(relay_forward_tx_msgs) / sizeof(*relay_forward_tx_msgs));
+    const bool reply_rx = check_counter_increased(
+        ifname, rx_sock_v6, (const int *)relay_reply_rx_msgs,
+        sizeof(relay_reply_rx_msgs) / sizeof(*relay_reply_rx_msgs));
+    const bool reply_tx = check_counter_increased(
+        ifname, tx_sock_v6, (const int *)relay_reply_tx_msgs,
+        sizeof(relay_reply_tx_msgs) / sizeof(*relay_reply_tx_msgs));
+
+    if ((forward_rx && !forward_tx) || (reply_rx && !reply_tx)) {
+        return DHCP_MON_STATUS_UNHEALTHY;
+    }
+    return forward_rx || reply_rx ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
