@@ -136,14 +136,10 @@ typedef enum
     DHCP_DEVICE_CHECK_POSITIVE,            /** Validate that received DORA packets are relayed */
     DHCP_DEVICE_CHECK_NEGATIVE_V6,         /** Presence of relayed DHCPv6 packets activity is flagged as unhealthy state */
     DHCP_DEVICE_CHECK_POSITIVE_V6,         /** Validate that received SARR packets are relayed */
-    DHCP_DEVICE_CHECK_AGG_EQUAL_RX,        /** Validate that aggregate device rx counters equal sum of member interfaces rx counters */
-    DHCP_DEVICE_CHECK_AGG_EQUAL_TX,        /** Validate that aggregate device tx counters equal sum of member interfaces tx counters */
-    DHCP_DEVICE_CHECK_AGG_EQUAL_RX_V6,     /** Validate that aggregate device rx counters equal sum of member interfaces rx counters for IPv6 */
-    DHCP_DEVICE_CHECK_AGG_EQUAL_TX_V6,     /** Validate that aggregate device tx counters equal sum of member interfaces tx counters for IPv6 */
-    DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX,     /** Validate that aggregate device rx counters are multiple of member interfaces rx counters */
-    DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX,     /** Validate that aggregate device tx counters are multiple of member interfaces tx counters */
-    DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX_V6,  /** Validate that aggregate device rx counters are multiple of member interfaces rx counters for IPv6 */
-    DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX_V6   /** Validate that aggregate device tx counters are multiple of member interfaces tx counters for IPv6 */
+    DHCP_DEVICE_CHECK_AGG_RX,              /** Compare IPv4 RX on a parent interface with its member aggregate */
+    DHCP_DEVICE_CHECK_AGG_TX,              /** Compare IPv4 TX on a parent interface with its member aggregate */
+    DHCP_DEVICE_CHECK_AGG_RX_V6,           /** Compare IPv6 RX on a parent interface with its member aggregate */
+    DHCP_DEVICE_CHECK_AGG_TX_V6            /** Compare IPv6 TX on a parent interface with its member aggregate */
 } dhcp_device_check_t;
 
 /** Monitored DHCP message type */

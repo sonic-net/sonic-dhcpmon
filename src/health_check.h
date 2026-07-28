@@ -9,14 +9,16 @@
 #include "dhcp_device.h"
 
 #include <swss/events.h>
+#include <string>
 
 /** DHCP device/interface state */
 typedef struct
 {
-    dhcp_mon_status_t (*check_health)();           /** check function */
-    void (*alert)(int duration);                   /** alert function when check failed */
-    void (*log)(int duration);                     /** log function when check passed */
-    int count;                                     /** count in the number of unhealthy checks */
+    std::string ifname;                     /** interface to check */
+    dhcp_device_check_t check_type;         /** check to apply */
+    void (*alert)(int duration);            /** alert function */
+    const char *error_format;               /** threshold error format */
+    int count;                              /** consecutive unhealthy checks */
 } dhcp_mon_state_t;
 
 extern event_handle_t g_events_handle;
@@ -26,7 +28,18 @@ extern int window_interval_sec;
 extern int dhcp_unhealthy_max_count;
 
 /**
- * @code check_dhcp_relay_health(state_data);
+ * @code initialize_dhcp_relay_health();
+ *
+ * @brief Populate health states from discovered VLAN and PortChannel members
+ *
+ * @param none
+ *
+ * @return none
+ */
+void initialize_dhcp_relay_health();
+
+/**
+ * @code check_dhcp_relay_health();
  *
  * @brief check DHCP relay overall health
  *

@@ -20,11 +20,7 @@
 
 extern bool debug_on;
 
-extern std::string agg_dev_all;
-extern std::string agg_dev_prefix;
-
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
-extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
 const std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Malformed", "Ignored"
@@ -204,7 +200,7 @@ static dhcp_mon_status_t dhcp_device_check_negative_health_v6(const std::string 
  * @return                  true if deltas are equal with given ratio, false otherwise
  */
 static bool check_counters_delta_expected(const std::string &ifname, const std::string &other_ifname, int sock,
-                                         uint8_t ratio, const int *monitored_msgs, size_t monitored_msg_cnt)
+                                         size_t ratio, const int *monitored_msgs, size_t monitored_msg_cnt)
 {
     const sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
     const counter_t &counters = sock_info.all_counters.at(ifname);
@@ -223,63 +219,49 @@ static bool check_counters_delta_expected(const std::string &ifname, const std::
     return true;
 }
 
-static dhcp_mon_status_t dhcp_device_check_agg_equal_rx(const std::string &ifname)
+/**
+ * @code get_aggregate_ratio(ifname, sock);
+ *
+ * @brief Get the expected aggregate ratio for an interface and packet direction
+ *
+ * @param ifname    Parent interface name
+ * @param sock      Socket identifying the protocol family and direction
+ *
+ * @return One for RX and PortChannel TX; direct VLAN member count for VLAN TX
+ */
+static size_t get_aggregate_ratio(const std::string &ifname, int sock)
 {
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, rx_sock, 1, (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
+    // RX crosses one edge. VLAN TX is observed on every direct member; PortChannel TX is observed on one member.
+    if (sock_mgr_get_sock_info(sock).is_rx) {
+        return 1;
+    }
+    const auto vlan = rev_vlan_map.find(ifname);
+    return vlan == rev_vlan_map.end() ? 1 : vlan->second.size();
 }
 
-static dhcp_mon_status_t dhcp_device_check_agg_equal_tx(const std::string &ifname)
+/**
+ * @code check_aggregate_health(ifname, sock, monitored_msgs, monitored_msg_cnt);
+ *
+ * @brief Compare a parent interface counter with the aggregate of its direct member-interface counters
+ *
+ * @param ifname            Parent interface name
+ * @param sock              Socket identifying the protocol family and direction
+ * @param monitored_msgs    Message types to compare
+ * @param monitored_msg_cnt Number of message types to compare
+ *
+ * @return HEALTHY when idle or matching, UNHEALTHY when the expected ratio does not match
+ */
+static dhcp_mon_status_t check_aggregate_health(const std::string &ifname, int sock, const int *monitored_msgs,
+                                                size_t monitored_msg_cnt)
 {
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, tx_sock, 1, (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
-}
-
-static dhcp_mon_status_t dhcp_device_check_agg_equal_rx_v6(const std::string &ifname)
-{
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, rx_sock_v6, 1, (const int *)monitored_v6_msgs, monitored_v6_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
-}
-
-static dhcp_mon_status_t dhcp_device_check_agg_equal_tx_v6(const std::string &ifname)
-{
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, tx_sock_v6, 1, (const int *)monitored_v6_msgs, monitored_v6_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
-}
-
-static dhcp_mon_status_t dhcp_device_check_agg_multiple_rx(const std::string &ifname)
-{
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, rx_sock, readonly_access(rev_vlan_map, ifname).size() + readonly_access(rev_portchan_map, ifname).size(),
-                                        (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
-}
-
-static dhcp_mon_status_t dhcp_device_check_agg_multiple_tx(const std::string &ifname)
-{
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, tx_sock, readonly_access(rev_vlan_map, ifname).size() + readonly_access(rev_portchan_map, ifname).size(),
-                                        (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
-}
-
-static dhcp_mon_status_t dhcp_device_check_agg_multiple_rx_v6(const std::string &ifname)
-{
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, rx_sock_v6, readonly_access(rev_vlan_map, ifname).size() + readonly_access(rev_portchan_map, ifname).size(),
-                                        (const int *)monitored_v6_msgs, monitored_v6_msg_sz) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
-}
-
-static dhcp_mon_status_t dhcp_device_check_agg_multiple_tx_v6(const std::string &ifname)
-{
-    std::string agg_ifname = agg_dev_prefix + ifname;
-    return check_counters_delta_expected(ifname, agg_ifname, tx_sock_v6, readonly_access(rev_vlan_map, ifname).size() + readonly_access(rev_portchan_map, ifname).size(),
-                                        (const int *)monitored_v6_msgs, monitored_v6_msg_sz) ?
+    const std::string agg_ifname = get_agg_counter_ifname(ifname);
+    if (!check_counter_increased(ifname, sock, monitored_msgs, monitored_msg_cnt) &&
+        !check_counter_increased(agg_ifname, sock, monitored_msgs, monitored_msg_cnt)) {
+        return DHCP_MON_STATUS_HEALTHY;
+    }
+    return check_counters_delta_expected(
+               ifname, agg_ifname, sock, get_aggregate_ratio(ifname, sock),
+               monitored_msgs, monitored_msg_cnt) ?
            DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
 }
 
@@ -382,7 +364,14 @@ void dhcp_device_print_status_debug(const std::string &ifname, dhcp_counters_typ
 
 dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_check_t check_type)
 {
-    if (sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz, (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
+    bool aggregate_check =
+        check_type == DHCP_DEVICE_CHECK_AGG_RX ||
+        check_type == DHCP_DEVICE_CHECK_AGG_TX ||
+        check_type == DHCP_DEVICE_CHECK_AGG_RX_V6 ||
+        check_type == DHCP_DEVICE_CHECK_AGG_TX_V6;
+    if (!aggregate_check &&
+        sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz,
+                                    (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
         return DHCP_MON_STATUS_INDETERMINATE;
     }
 
@@ -395,27 +384,17 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
             return dhcp_device_check_positive_health_v6(ifname);
         case DHCP_DEVICE_CHECK_NEGATIVE_V6:
             return dhcp_device_check_negative_health_v6(ifname);
-        case DHCP_DEVICE_CHECK_AGG_EQUAL_RX:
-            return dhcp_device_check_agg_equal_rx(ifname);
-        case DHCP_DEVICE_CHECK_AGG_EQUAL_TX:
-            return dhcp_device_check_agg_equal_tx(ifname);
-        case DHCP_DEVICE_CHECK_AGG_EQUAL_RX_V6:
-            return dhcp_device_check_agg_equal_rx_v6(ifname);
-        case DHCP_DEVICE_CHECK_AGG_EQUAL_TX_V6:
-            return dhcp_device_check_agg_equal_tx_v6(ifname);
-        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX:
-            return dhcp_device_check_agg_multiple_rx(ifname);
-        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX:
-            return dhcp_device_check_agg_multiple_tx(ifname);
-        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_RX_V6:
-            return dhcp_device_check_agg_multiple_rx_v6(ifname);
-        case DHCP_DEVICE_CHECK_AGG_MULTIPLE_TX_V6:
-            return dhcp_device_check_agg_multiple_tx_v6(ifname);
+        case DHCP_DEVICE_CHECK_AGG_RX:
+            return check_aggregate_health(ifname, rx_sock, (const int *)monitored_msgs, monitored_msg_sz);
+        case DHCP_DEVICE_CHECK_AGG_TX:
+            return check_aggregate_health(ifname, tx_sock, (const int *)monitored_msgs, monitored_msg_sz);
+        case DHCP_DEVICE_CHECK_AGG_RX_V6:
+            return check_aggregate_health(ifname, rx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
+        case DHCP_DEVICE_CHECK_AGG_TX_V6:
+            return check_aggregate_health(ifname, tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
         default:
-            break;
+            return DHCP_MON_STATUS_UNHEALTHY;
     }
-
-    return DHCP_MON_STATUS_UNHEALTHY;
 }
 
 int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context)
