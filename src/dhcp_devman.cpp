@@ -323,6 +323,16 @@ std::string dhcp_devman_get_parent_ifname(const std::string &ifname)
     return "";
 }
 
+/**
+ * @code get_device_context(ifname, depth);
+ *
+ * @brief Follow parent mappings until reaching a tracked input interface
+ *
+ * @param ifname    Interface name to resolve
+ * @param depth     Current parent traversal depth
+ *
+ * @return Tracked interface context, or NULL when no context is found
+ */
 static const dhcp_device_context_t *get_device_context(
     const std::string &ifname, unsigned int depth)
 {

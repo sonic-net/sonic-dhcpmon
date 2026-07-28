@@ -134,18 +134,18 @@ void dhcp_devman_free();
  *
  * @param ifname           interface name
  *
- * @return parent interface name, or an empty string for a root or unmapped interface
+ * @return Immediate parent interface name, or an empty string when the interface is a tracked root or is unmapped
  */
 std::string dhcp_devman_get_parent_ifname(const std::string &ifname);
 
 /**
  * @code dhcp_devman_get_device_context(ifname);
  *
- * @brief find device context by following VLAN and PortChannel parent mappings.
+ * @brief find the tracked input interface that owns an interface.
  *
  * @param ifname           interface name
  *
- * @return pointer to device (interface) context if found, NULL otherwise
+ * @return The interface's tracked context; a tracked input interface returns its own context
  */
 const dhcp_device_context_t* dhcp_devman_get_device_context(const std::string &ifname);
 
