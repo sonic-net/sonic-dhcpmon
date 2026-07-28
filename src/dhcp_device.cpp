@@ -147,9 +147,7 @@ static bool check_counter_increased(const std::string &ifname, int sock, const i
 
 /**
  * @code dhcp_device_check_positive_health(ifname);
- * @brief Check that DHCP relayed messages are being transmitted out of this interface/dev
- *        using its counters. The interface is positively healthy if there are DHCP message
- *        travelling through it.
+ * @brief Check that RX Discover, Offer, Request, and Ack activity has matching same-type TX activity.
  * @param ifname           interface name
  * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
@@ -161,7 +159,8 @@ static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &if
 
 /**
  * @code dhcp_device_check_positive_health_v6(ifname);
- * @brief Check that SARR or nested relay input produces the corresponding DHCPv6 relay output.
+ * @brief Check that RX Solicit, Request, or Relay-Forward activity has TX Relay-Forward activity,
+ *        and RX Relay-Reply activity has TX Advertise, Reply, or Relay-Reply activity.
  * @param ifname interface name
  * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
