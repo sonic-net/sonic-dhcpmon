@@ -141,7 +141,7 @@ std::string dhcp_devman_get_parent_ifname(const std::string &ifname);
 /**
  * @code dhcp_devman_get_device_context(ifname);
  *
- * @brief find device context by following the interface hierarchy.
+ * @brief find device context by following VLAN and PortChannel parent mappings.
  *
  * @param ifname           interface name
  *
