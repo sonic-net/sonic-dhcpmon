@@ -40,6 +40,11 @@ const dhcp_message_type_t monitored_msgs[] = {
 
 uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msgs);
 
+static const dhcp_message_type_t monitored_v4_forward_msgs[] = {
+    DHCP_MESSAGE_TYPE_DISCOVER,
+    DHCP_MESSAGE_TYPE_REQUEST
+};
+
 const dhcpv6_message_type_t monitored_v6_msgs[] = {
     DHCPV6_MESSAGE_TYPE_SOLICIT,
     DHCPV6_MESSAGE_TYPE_ADVERTISE,
@@ -182,6 +187,55 @@ static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string 
         return DHCP_MON_STATUS_UNHEALTHY;
     }
     return forward_rx || reply_rx ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
+}
+
+/**
+ * @code dhcp_device_check_server_fanout(ifname);
+ * @brief Check that each DHCPv4 forward packet is transmitted once per configured server.
+ * @param ifname interface name
+ * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ */
+static dhcp_mon_status_t dhcp_device_check_server_fanout(const std::string &ifname)
+{
+    const size_t server_count = get_configured_dhcp_server_count(false);
+    if (server_count == 0) {
+        return DHCP_MON_STATUS_INDETERMINATE;
+    }
+
+    bool has_activity = false;
+    for (const auto msg_type : monitored_v4_forward_msgs) {
+        const uint64_t rx_delta = get_counter_delta(ifname, rx_sock, msg_type);
+        const uint64_t tx_delta = get_counter_delta(ifname, tx_sock, msg_type);
+        has_activity = has_activity || rx_delta > 0 || tx_delta > 0;
+        if (tx_delta != rx_delta * server_count) {
+            return DHCP_MON_STATUS_UNHEALTHY;
+        }
+    }
+    return has_activity ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
+}
+
+/**
+ * @code dhcp_device_check_server_fanout_v6(ifname);
+ * @brief Check that each DHCPv6 forward input is transmitted once per configured server.
+ * @param ifname interface name
+ * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ */
+static dhcp_mon_status_t dhcp_device_check_server_fanout_v6(const std::string &ifname)
+{
+    const size_t server_count = get_configured_dhcp_server_count(true);
+    if (server_count == 0) {
+        return DHCP_MON_STATUS_INDETERMINATE;
+    }
+
+    uint64_t rx_delta = 0;
+    for (const auto msg_type : monitored_v6_forward_rx_msgs) {
+        rx_delta += get_counter_delta(ifname, rx_sock_v6, msg_type);
+    }
+    const uint64_t tx_delta = get_counter_delta(ifname, tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW);
+    if (rx_delta == 0 && tx_delta == 0) {
+        return DHCP_MON_STATUS_INDETERMINATE;
+    }
+    return tx_delta == rx_delta * server_count ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
 }
 
 /**
@@ -392,7 +446,9 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
         check_type == DHCP_DEVICE_CHECK_AGG_RX ||
         check_type == DHCP_DEVICE_CHECK_AGG_TX ||
         check_type == DHCP_DEVICE_CHECK_AGG_RX_V6 ||
-        check_type == DHCP_DEVICE_CHECK_AGG_TX_V6;
+        check_type == DHCP_DEVICE_CHECK_AGG_TX_V6 ||
+        check_type == DHCP_DEVICE_CHECK_SERVER_FANOUT ||
+        check_type == DHCP_DEVICE_CHECK_SERVER_FANOUT_V6;
     if (!aggregate_check &&
         sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz,
                                     (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
@@ -416,6 +472,10 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
             return check_aggregate_health(ifname, rx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
         case DHCP_DEVICE_CHECK_AGG_TX_V6:
             return check_aggregate_health(ifname, tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
+        case DHCP_DEVICE_CHECK_SERVER_FANOUT:
+            return dhcp_device_check_server_fanout(ifname);
+        case DHCP_DEVICE_CHECK_SERVER_FANOUT_V6:
+            return dhcp_device_check_server_fanout_v6(ifname);
         default:
             return DHCP_MON_STATUS_UNHEALTHY;
     }

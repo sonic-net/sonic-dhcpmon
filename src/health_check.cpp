@@ -44,6 +44,12 @@ static const char agg_rx_v6_disparity_error[] =
 static const char agg_tx_v6_disparity_error[] =
     "dhcpmon detected an IPv6 TX disparity between interface %s and the aggregate of its member interface counters."
     " Duration: %d (sec)";
+static const char server_fanout_error[] =
+    "dhcpmon detected an IPv4 disparity between relay input and configured server fan-out for interface %s."
+    " Duration: %d (sec)";
+static const char server_fanout_v6_error[] =
+    "dhcpmon detected an IPv6 disparity between relay input and configured server fan-out for interface %s."
+    " Duration: %d (sec)";
 
 /**
  * @code alert_dhcp_relay_disparity(duration);
@@ -76,6 +82,8 @@ void initialize_dhcp_relay_health()
     if (mgmt_ifname.size() > 0) {
         state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE_V6, NULL, mgmt_error, 0});
     }
+    state_data.push_back({agg_dev_all, DHCP_DEVICE_CHECK_SERVER_FANOUT, NULL, server_fanout_error, 0});
+    state_data.push_back({agg_dev_all, DHCP_DEVICE_CHECK_SERVER_FANOUT_V6, NULL, server_fanout_v6_error, 0});
 
     for (const auto &[vlan, _] : rev_vlan_map) {
         state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_RX, NULL, agg_rx_disparity_error, 0});

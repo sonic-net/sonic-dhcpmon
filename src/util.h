@@ -63,6 +63,14 @@ bool addr6_is_primary(const std::string &ifname, const in6_addr *addr);
 bool intf_is_standby(const std::string &ifname);
 
 /**
+ * @code get_configured_dhcp_server_count(is_v6);
+ * @brief Get the number of DHCP servers configured for the downstream interface.
+ * @param is_v6 whether to read the DHCPv6 server list
+ * @return configured server count, or zero when no supported server list is present
+ */
+size_t get_configured_dhcp_server_count(bool is_v6);
+
+/**
  * @code  construct_counter_db_table_key(ifname, is_v6);
  * @brief Function to construct key in counters_db, only add downstream prefix for non-downstream interface
  * @param ifname       interface name

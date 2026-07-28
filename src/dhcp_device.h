@@ -139,7 +139,9 @@ typedef enum
     DHCP_DEVICE_CHECK_AGG_RX,              /** Compare IPv4 RX on a parent interface with its member aggregate */
     DHCP_DEVICE_CHECK_AGG_TX,              /** Compare IPv4 TX on a parent interface with its member aggregate */
     DHCP_DEVICE_CHECK_AGG_RX_V6,           /** Compare IPv6 RX on a parent interface with its member aggregate */
-    DHCP_DEVICE_CHECK_AGG_TX_V6            /** Compare IPv6 TX on a parent interface with its member aggregate */
+    DHCP_DEVICE_CHECK_AGG_TX_V6,           /** Compare IPv6 TX on a parent interface with its member aggregate */
+    DHCP_DEVICE_CHECK_SERVER_FANOUT,       /** Compare IPv4 forward traffic with configured server fan-out */
+    DHCP_DEVICE_CHECK_SERVER_FANOUT_V6     /** Compare IPv6 forward traffic with configured server fan-out */
 } dhcp_device_check_t;
 
 /** Monitored DHCP message type */

@@ -32,6 +32,33 @@ struct udp6_pseudo_header {
 };
 
 /**
+ * @code get_config_list_count(table, field);
+ * @brief Count entries in a comma-separated CONFIG_DB list field for the downstream interface.
+ * @param table CONFIG_DB table name
+ * @param field CONFIG_DB field name
+ * @return number of configured entries, or zero when the field is absent
+ */
+static size_t get_config_list_count(const std::string &table, const std::string &field)
+{
+    const std::string key = table + "|" + downstream_ifname;
+    auto value = mConfigDbPtr->hget(key, field + "@");
+    if (value == NULL) {
+        value = mConfigDbPtr->hget(key, field);
+    }
+    if (value == NULL || value->empty()) {
+        return 0;
+    }
+
+    size_t count = 1;
+    for (const char ch : *value) {
+        if (ch == ',') {
+            count++;
+        }
+    }
+    return count;
+}
+
+/**
  * @code _addr_is_primary(ifname, addr, addr_len);
  * @brief Check if the given address is primary on the interface by querying ConfigDB.
  * @param ifname    interface name
@@ -89,6 +116,18 @@ bool intf_is_standby(const std::string &ifname)
         return state == "standby";
     }
     return false;
+}
+
+size_t get_configured_dhcp_server_count(bool is_v6)
+{
+    size_t count = is_v6 ?
+        get_config_list_count("DHCP_RELAY", "dhcpv6_servers") :
+        get_config_list_count("DHCPV4_RELAY", "dhcpv4_servers");
+    if (count > 0) {
+        return count;
+    }
+
+    return get_config_list_count("VLAN", is_v6 ? "dhcpv6_servers" : "dhcp_servers");
 }
 
 std::string construct_counter_db_table_key(const std::string &ifname, bool is_v6) {
