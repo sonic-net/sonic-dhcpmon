@@ -520,6 +520,7 @@ int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_i
     // deinitialization of counters is not our responsibility
     // cache counter will be cleanup by sock_mgr_free and the initialized db we intend to keep
     initialize_all_intf_counters();
+    dhcp_device_reset_health_state(agg_dev_all);
     syslog(LOG_INFO, "Initialized all counters for tracked interfaces");
 
     window_interval_sec = window_sec;

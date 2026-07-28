@@ -69,38 +69,135 @@ static const char *counter_desc[DHCP_COUNTERS_COUNT] = {
     [DHCP_COUNTERS_SNAPSHOT_V6] = "Snapshot_V6",
 };
 
+typedef struct
+{
+    uint64_t last_rx = 0;
+    uint64_t last_tx = 0;
+    uint32_t pending_windows = 0;
+    uint8_t tx_credit = 0;
+    bool initialized = false;
+} relay_flow_state_t;
+
+static std::unordered_map<int, std::unordered_map<std::string,
+    std::unordered_map<int, relay_flow_state_t>>> relay_flow_states;
+
+static void initialize_relay_flow_states(const std::string &ifname)
+{
+    const counter_t &rx_counters = sock_mgr_get_sock_info(rx_sock).all_counters.at(ifname);
+    const counter_t &tx_counters = sock_mgr_get_sock_info(tx_sock).all_counters.at(ifname);
+    for (size_t i = 0; i < monitored_msg_sz; i++) {
+        int msg_type = monitored_msgs[i];
+        relay_flow_states[rx_sock][ifname][msg_type] = {
+            rx_counters.at(msg_type), tx_counters.at(msg_type), 0, 0, true
+        };
+    }
+}
+
+void dhcp_device_reset_health_state(const std::string &ifname)
+{
+    relay_flow_states[rx_sock].erase(ifname);
+    initialize_relay_flow_states(ifname);
+}
+
 /**
- * @code check_counter_not_transmitted(ifname, rx_sock, tx_sock, monitored_msgs, monitored_msg_cnt);
- * @brief Check if there are received DHCP messages that are not transmitted out
- *        of this interface/device using its counters.
+ * @brief Update and return unmatched RX age per DHCP message type.
  * @param ifname            interface name
  * @param rx_sock           rx socket
  * @param tx_sock           tx socket
  * @param monitored_msgs    array of monitored message types
  * @param monitored_msg_cnt number of monitored message types
- * @return                  true if there are received messages not transmitted out, false otherwise
+ * @return                  message type to unmatched-window count
  */
-// these helpers use const int * to accept both dhcp_message_type_t and dhcpv6_message_type_t arrays
-// without duplicating the function for each enum type; safe on GCC/Linux where unscoped enums use int
-static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock, int tx_sock, const int *monitored_msgs, size_t monitored_msg_cnt)
+static std::unordered_map<int, uint32_t> get_untransmitted_windows(
+    const std::string &ifname, int rx_sock, int tx_sock,
+    const int *monitored_msgs, size_t monitored_msg_cnt,
+    bool *reset_detected = NULL)
 {
     const sock_info_t &rx_sock_info = sock_mgr_get_sock_info(rx_sock);
     const counter_t &rx_counters = rx_sock_info.all_counters.at(ifname);
-    const counter_t &rx_counters_snapshot = rx_sock_info.all_counters_snapshot.at(ifname);
-
     const sock_info_t &tx_sock_info = sock_mgr_get_sock_info(tx_sock);
     const counter_t &tx_counters = tx_sock_info.all_counters.at(ifname);
-    const counter_t &tx_counters_snapshot = tx_sock_info.all_counters_snapshot.at(ifname);
 
-    // when there is packet in, no packet out
+    std::unordered_map<int, uint32_t> result;
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
-        if (rx_counters.at(monitored_msgs[i]) > rx_counters_snapshot.at(monitored_msgs[i]) &&
-            tx_counters.at(monitored_msgs[i]) <= tx_counters_snapshot.at(monitored_msgs[i])) {
+        int msg_type = monitored_msgs[i];
+        uint64_t current_rx = rx_counters.at(msg_type);
+        uint64_t current_tx = tx_counters.at(msg_type);
+        relay_flow_state_t &state = relay_flow_states[rx_sock][ifname][msg_type];
+
+        if (!state.initialized || current_rx < state.last_rx || current_tx < state.last_tx) {
+            if (reset_detected != NULL && state.initialized) {
+                *reset_detected = true;
+            }
+            state = {current_rx, current_tx, 0, 0, true};
+            result[msg_type] = 0;
+            continue;
+        }
+
+        uint64_t rx_delta = current_rx - state.last_rx;
+        uint64_t tx_delta = current_tx - state.last_tx;
+        bool had_pending = state.pending_windows > 0;
+        bool previous_tx_credit = state.tx_credit > 0;
+        bool current_tx_activity = tx_delta > 0;
+        state.last_rx = current_rx;
+        state.last_tx = current_tx;
+
+        if (had_pending) {
+            if (previous_tx_credit || current_tx_activity) {
+                state.pending_windows = 0;
+                state.tx_credit = previous_tx_credit && current_tx_activity ? 1 : 0;
+            } else {
+                state.pending_windows++;
+                state.tx_credit = 0;
+            }
+        } else if (rx_delta > 0) {
+            if (previous_tx_credit) {
+                state.pending_windows = 0;
+                state.tx_credit = current_tx_activity ? 1 : 0;
+            } else if (current_tx_activity) {
+                state.pending_windows = 0;
+                state.tx_credit = 0;
+            } else {
+                state.pending_windows = 1;
+                state.tx_credit = 0;
+            }
+        } else {
+            state.pending_windows = 0;
+            state.tx_credit = current_tx_activity ? 1 : 0;
+        }
+        result[msg_type] = state.pending_windows;
+    }
+    return result;
+}
+
+std::unordered_map<int, uint32_t> dhcp_device_get_untransmitted_windows(const std::string &ifname)
+{
+    return get_untransmitted_windows(ifname, rx_sock, tx_sock,
+                                     (const int *)monitored_msgs, monitored_msg_sz);
+}
+
+static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock, int tx_sock,
+                                          const int *monitored_msgs, size_t monitored_msg_cnt)
+{
+    const sock_info_t &rx_sock_info = sock_mgr_get_sock_info(rx_sock);
+    const counter_t &rx_counters = rx_sock_info.all_counters.at(ifname);
+    const counter_t &rx_snapshot = rx_sock_info.all_counters_snapshot.at(ifname);
+    const sock_info_t &tx_sock_info = sock_mgr_get_sock_info(tx_sock);
+    const counter_t &tx_counters = tx_sock_info.all_counters.at(ifname);
+    const counter_t &tx_snapshot = tx_sock_info.all_counters_snapshot.at(ifname);
+
+    for (size_t i = 0; i < monitored_msg_cnt; i++) {
+        int msg_type = monitored_msgs[i];
+        if (rx_counters.at(msg_type) > rx_snapshot.at(msg_type) &&
+            tx_counters.at(msg_type) <= tx_snapshot.at(msg_type)) {
             return true;
         }
     }
     return false;
 }
+
+static bool check_counter_increased(const std::string &ifname, int sock,
+                                    const int *monitored_msgs, size_t monitored_msg_cnt);
 
 /**
  * @code dhcp_device_check_positive_health(ifname);
@@ -112,8 +209,24 @@ static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock
  */
 static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &ifname)
 {
-    return check_counter_not_transmitted(ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
+    bool reset_detected = false;
+    bool has_activity = check_counter_increased(ifname, rx_sock,
+                                                (const int *)monitored_msgs, monitored_msg_sz) ||
+                        check_counter_increased(ifname, tx_sock,
+                                                (const int *)monitored_msgs, monitored_msg_sz);
+    auto windows_by_type = get_untransmitted_windows(
+        ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz,
+        &reset_detected);
+    if (reset_detected) {
+        // Counter replacement ends any pre-reset unhealthy episode.
+        return DHCP_MON_STATUS_HEALTHY;
+    }
+    for (const auto &[msg_type, windows] : windows_by_type) {
+        if (windows > 0) {
+            return DHCP_MON_STATUS_UNHEALTHY;
+        }
+    }
+    return has_activity ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
@@ -382,7 +495,9 @@ void dhcp_device_print_status_debug(const std::string &ifname, dhcp_counters_typ
 
 dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_check_t check_type)
 {
-    if (sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz, (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
+    if (check_type != DHCP_DEVICE_CHECK_POSITIVE &&
+        sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz,
+                                    (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
         return DHCP_MON_STATUS_INDETERMINATE;
     }
 

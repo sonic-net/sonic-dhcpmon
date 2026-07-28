@@ -18,6 +18,7 @@
 #include <netinet/in.h>
 #include <net/ethernet.h>
 #include <string>
+#include <unordered_map>
 
 /** DHCP message types */
 typedef enum
@@ -241,6 +242,14 @@ void dhcp_device_free(dhcp_device_context_t *context);
  * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
 dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_check_t check_type);
+
+/**
+ * @brief Update and return unmatched DHCPv4 relay RX age in health windows per message type.
+ */
+std::unordered_map<int, uint32_t> dhcp_device_get_untransmitted_windows(const std::string &ifname);
+
+/** Reset DHCPv4 relay-flow watermarks */
+void dhcp_device_reset_health_state(const std::string &ifname);
 
 /**
  * @code dhcp_device_print_status(ifname, type);
