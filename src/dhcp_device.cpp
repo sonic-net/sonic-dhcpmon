@@ -531,16 +531,11 @@ dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type)
         syslog(LOG_ALERT, "malloc: failed to allocated device context memory for '%s'", ifname);
         goto no_free;
     }
+    memset(context, 0, sizeof(*context));
 
     // set device name
     strncpy(context->intf, ifname, sizeof(context->intf) - 1);
     context->intf[sizeof(context->intf) - 1] = '\0';
-        
-    // set device meta data
-    if (initialize_intf_mac_and_ip_addr(context) < 0) {
-        syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", ifname);
-        goto free_context;
-    }
         
     // context interface can be uplink downlink or mgmt
     switch (intf_type) {
@@ -557,6 +552,18 @@ dhcp_device_context_t* dhcp_device_init(const char *ifname, char intf_type)
             syslog(LOG_ALERT, "Invalid interface type '%c' for interface %s", intf_type, ifname);
             goto free_context;
         }
+
+    // Management only needs interface identity for packet counters and health checks.
+    if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
+        if (if_nametoindex(ifname) == 0) {
+            syslog(LOG_ALERT, "Failed to find management interface %s: %s", ifname, strerror(errno));
+            goto free_context;
+        }
+    } else if (initialize_intf_mac_and_ip_addr(context) < 0) {
+        syslog(LOG_ALERT, "Failed to initialize mac/ip address for interface %s", ifname);
+        goto free_context;
+    }
+
     syslog(LOG_INFO, "Interface %s is %s", ifname, intf_type_name[context->intf_type]);
 
     syslog(LOG_INFO, "Successfully initialized context interface %s", ifname);
