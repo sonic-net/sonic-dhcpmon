@@ -39,17 +39,16 @@ static inline void increase_single_cache_counter(const std::string &ifname, int 
 }
 
 /**
- * @code increase_cache_counter(ifname, context, sock, type, dup_to_context);
- * @brief increase cache counter for given ifname and aggregate, optionally continuing through its context hierarchy
+ * @code increase_cache_counter(ifname, context, sock, type);
+ * @brief increase cache counter for given ifname and its immediate aggregate
  *        the type has to be valid, there will be no more checking. Type check before hand.
  * @param ifname            interface name
  * @param context           pointer to device context
  * @param sock              socket number
  * @param type              message type
- * @param dup_to_context    whether to duplicate increases through parent interfaces to the context
  * @return                  none
  */
-static void increase_cache_counter(const std::string &ifname, const dhcp_device_context_t *context, int sock, uint8_t type, bool dup_to_context=false)
+static void increase_cache_counter(const std::string &ifname, const dhcp_device_context_t *context, int sock, uint8_t type)
 {
     increase_single_cache_counter(ifname, sock, type);
 
@@ -59,19 +58,6 @@ static void increase_cache_counter(const std::string &ifname, const dhcp_device_
     }
 
     increase_single_cache_counter(dhcp_devman_get_agg_counter_ifname(ifname), sock, type);
-    
-    if (dup_to_context) {
-        const std::string context_ifname(context->intf);
-        const std::string parent_ifname = dhcp_devman_get_parent_ifname(ifname);
-        const std::string next_ifname = parent_ifname.empty() ? context_ifname : parent_ifname;
-
-        // Preserve existing DualToR attribution in this PR: logical counters are rebuilt
-        // from MUX-filtered physical RX instead of raw logical callbacks. A follow-up will
-        // validate active/standby callback layers and remove this recursion; per-layer
-        // aggregate counters can drive health directly without copying through
-        // physical-to-PortChannel-to-VLAN.
-        increase_cache_counter(next_ifname, context, sock, type, next_ifname != context_ifname);
-    }
 }
 
 static bool check_dhcp_option_53(dhcp_msg_check_profile_t *profile, const dhcp_device_context_t *context, const struct iphdr *iphdr, const uint8_t *buffer)
@@ -384,33 +370,19 @@ static bool validate_udp_checksum(struct udphdr *udphdr, const uint8_t *buffer, 
 
 /**
  * @code should_ignore_rx_packet(ifname, context);
- * @brief Preserve existing DualToR attribution by ignoring raw logical RX and
- *        standby physical RX on a downlink context.
+ * @brief Ignore DHCP RX observed on a standby physical interface in DualToR.
+ *        Logical observations are counted normally because they represent the
+ *        network layer reached by the packet.
  * @param ifname Observed interface name
  * @param context Tracked interface context
- * @return true when the observation should not update counters
+ * @return true for a standby physical observation on a DualToR downlink
  */
 static bool should_ignore_rx_packet(const std::string &ifname, const dhcp_device_context_t *context)
 {
-    const bool logical_interface =
-        ifname == context->intf || rev_portchan_map.find(ifname) != rev_portchan_map.end();
+    const bool physical_interface =
+        ifname != context->intf && rev_portchan_map.find(ifname) == rev_portchan_map.end();
     return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK &&
-           (logical_interface || intf_is_standby(ifname));
-}
-
-/**
- * @code should_dup_rx_packet(ifname, context);
- * @brief Identify accepted DualToR downlink physical RX that must rebuild its
- *        logical parent path.
- * @param ifname Observed interface name
- * @param context Tracked interface context
- * @return true for a non-standby physical observation on a DualToR downlink
- */
-static bool should_dup_rx_packet(const std::string &ifname, const dhcp_device_context_t *context)
-{
-    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK &&
-           ifname != context->intf && rev_portchan_map.find(ifname) == rev_portchan_map.end() &&
-           !intf_is_standby(ifname);
+           physical_interface && intf_is_standby(ifname);
 }
 
 /**
@@ -658,21 +630,13 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
 
     syslog_debug(LOG_INFO, "packet_handler %s: handle packet on interface %s, context %s, buffer size %zd", sock_info.name, ifname.c_str(), context->intf, buffer_sz);
     
-    // handler will be invoked for physical interface and context interface, so both counters will be updated
-    // For single tor and dualtor uplink, no special care is needed
-    // For dualtor, rx packets come from downlink standby interfaces will be ignored, hence directly
-    // to prevent mis-count, on dualtor downlink
-    //   - Ignore packets captured on logical interfaces and standby physical interfaces
-    //   - Reconstruct the logical path from each accepted physical observation
+    // Count each observed interface independently. In DualToR, ignore only RX
+    // observed on a standby physical downlink because that path cannot relay it.
     if (sock_info.is_rx && should_ignore_rx_packet(ifname, context)) {
-        syslog_debug(LOG_INFO, "packet_handler %s: ignore packet on interface %s, context %s, because it is a dual tor downlink logical or standby interface",
+        syslog_debug(LOG_INFO, "packet_handler %s: ignore packet on interface %s, context %s, because it is a dual tor standby physical interface",
                      sock_info.name, ifname.c_str(), context->intf);
         return;
     }
-
-    bool dup_to_context = sock_info.is_rx && should_dup_rx_packet(ifname, context);
-    syslog_debug(LOG_INFO, "packet_handler %s: duplicate packet from %s to context interface %s: %s",
-                 sock_info.name, ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
 
     /**
      * The MTU was not understood correctly by earlier DHCP implementations,
@@ -695,7 +659,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     if (buffer_sz > DHCP_MTU_MIN) {
         syslog_debug(LOG_WARNING, "packet_handler %s: buffer_sz %zd exceeds expectation, interface %s, context %s, malformed",
                      sock_info.name, buffer_sz, ifname.c_str(), context->intf);
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler %s: buffer_sz check passed, buffer_sz %zd, interface %s, context %s",
@@ -708,7 +672,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
         syslog_debug(LOG_WARNING, "packet_handler %s: packet is not valid ip packet, interface %s, context %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf);
         syslog_debug(LOG_WARNING, "packet_handler %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED);
         return;
     }
     char src_ip[INET_ADDRSTRLEN], dst_ip[INET_ADDRSTRLEN];
@@ -723,7 +687,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
         syslog_debug(LOG_WARNING, "packet_handler %s: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
         syslog_debug(LOG_WARNING, "packet_handler %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler %s: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
@@ -734,7 +698,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     if (magic_cookie != DHCP_MAGIC_COOKIE) {
         syslog_debug(LOG_WARNING, "packet_handler %s: magic cookie mismatch, interface %s, context %s, src ip %s, dst ip %s, magic cookie in packet: 0x%X",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip, magic_cookie);
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_BOOTP, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_BOOTP);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler %s: magic cookie check passed, interface %s, context %s, src ip %s, dst ip %s",
@@ -751,7 +715,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     if ((dhcp_option_53_ptr = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, dhcp_options_sz)) == NULL) {
         syslog_debug(LOG_WARNING, "packet_handler %s: cannot find option 53 value in dhcp packet, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED);
         return;
     }
     dhcp_message_type_t dhcp_option_53 = (dhcp_message_type_t)*dhcp_option_53_ptr;
@@ -762,7 +726,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     if (dhcp_option_53 == 0 || dhcp_option_53 > DHCP_MESSAGE_TYPE_INFORM) {
         syslog_debug(LOG_WARNING, "packet_handler %s: unknown option 53 value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
                      sock_info.name, dhcp_option_53, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_UNKNOWN, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_UNKNOWN);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler %s: option 53 value %d valid, interface %s, context %s, src ip %s, dst ip %s",
@@ -772,12 +736,12 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     if (check_dhcp_option_53(sock_info.is_rx ? (*dhcp_check_profile_ptr_rx)[dhcp_option_53] : (*dhcp_check_profile_ptr_tx)[dhcp_option_53], context, iphdr, buffer)) {
         syslog_debug(LOG_INFO, "packet_handler %s: option 53 value %d %s check passed, interface %s, context %s, src ip %s, dst ip %s",
                      sock_info.name, dhcp_option_53, get_dhcp_message_type_desc(dhcp_option_53), ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, dhcp_option_53, dup_to_context);
+        increase_cache_counter(ifname, context, sock, dhcp_option_53);
         return;
     } else {
         syslog_debug(LOG_WARNING, "packet_handler %s: option 53 value %d %s check failed, interface %s, context %s, src ip %s, dst ip %s, ignored",
                      sock_info.name, dhcp_option_53, get_dhcp_message_type_desc(dhcp_option_53), ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_IGNORED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_IGNORED);
         return;
     }
 }
@@ -788,22 +752,18 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 
     syslog_debug(LOG_INFO, "packet_handler_v6 %s: handle packet on interface %s, context %s, buffer size %zd", sock_info.name, ifname.c_str(), context->intf, buffer_sz);
 
-    // Similar to IPv4, ignore DualToR downlink RX on logical or standby interfaces.
+    // Similar to IPv4, ignore only DualToR standby physical downlink RX.
     if (sock_info.is_rx && should_ignore_rx_packet(ifname, context)) {
-        syslog_debug(LOG_INFO, "packet_handler_v6 %s: ignore packet on interface %s, context %s, because it is a dual tor downlink logical or standby interface",
+        syslog_debug(LOG_INFO, "packet_handler_v6 %s: ignore packet on interface %s, context %s, because it is a dual tor standby physical interface",
                      sock_info.name, ifname.c_str(), context->intf);
         return;
     }
-
-    bool dup_to_context = sock_info.is_rx && should_dup_rx_packet(ifname, context);
-    syslog_debug(LOG_INFO, "packet_handler_v6 %s: duplicate packet from %s to context interface %s: %s",
-                 sock_info.name, ifname.c_str(), context->intf, dup_to_context ? "yes" : "no");
 
     // similar to ipv4 packet handler, check buffer size against dhcpv6 minimum mtu first
     if (buffer_sz > DHCPV6_MTU_MIN) {
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: buffer_sz %zd exceeds expectation, interface %s, context %s, malformed",
                      sock_info.name, buffer_sz, ifname.c_str(), context->intf);
-        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler_v6 %s: buffer_sz check passed, buffer_sz %zd, interface %s, context %s",
@@ -816,7 +776,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: packet is not valid ipv6 packet with udp header, interface %s, context %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf);
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED);
         return;
     }
     struct ip6_hdr *ip6hdr = (struct ip6_hdr *)(buffer + IP_START_OFFSET);
@@ -831,7 +791,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: packet is not valid udp packet, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: %s", sock_info.name, generate_addr_string(buffer, buffer_sz).c_str());
-        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler_v6 %s: udp sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
@@ -843,7 +803,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
     if (msg_type == 0 || msg_type > DHCPV6_MESSAGE_TYPE_RELAY_REPL) {
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: unknown dhcpv6 message type value %d in dhcp packet, interface %s, context %s, src ip %s, dst ip %s",
                      sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_UNKNOWN, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_UNKNOWN);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 message type %d valid, interface %s, context %s, src ip %s, dst ip %s",
@@ -859,7 +819,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
     if (!dhcpv6_sanity_check(ifname, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 packet sanity check failed, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED);
         return;
     }
     syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
@@ -869,12 +829,12 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
                                   context, ip6hdr, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
         syslog_debug(LOG_INFO, "packet_handler_v6 %s: dhcpv6 message type %d %s check passed, interface %s, context %s, src ip %s, dst ip %s",
                      sock_info.name, msg_type, get_dhcpv6_message_type_desc(msg_type), ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, msg_type, dup_to_context);
+        increase_cache_counter(ifname, context, sock, msg_type);
         return;
     } else {
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 message type %d %s check failed, interface %s, context %s, src ip %s, dst ip %s, ignored",
                      sock_info.name, msg_type, get_dhcpv6_message_type_desc(msg_type), ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_IGNORED, dup_to_context);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_IGNORED);
         return;
     }
 }
