@@ -40,13 +40,13 @@ static inline void increase_single_cache_counter(const std::string &ifname, int 
 
 /**
  * @code increase_cache_counter(ifname, context, sock, type, dup_to_context);
- * @brief increase cache counter for given ifname, and optionally for context ifname and aggregate device
+ * @brief increase cache counter for given ifname and aggregate, optionally continuing through its context hierarchy
  *        the type has to be valid, there will be no more checking. Type check before hand.
  * @param ifname            interface name
  * @param context           pointer to device context
  * @param sock              socket number
  * @param type              message type
- * @param dup_to_context    whether to duplicate increase to context interface name
+ * @param dup_to_context    whether to duplicate increases through parent interfaces to the context
  * @return                  none
  */
 static void increase_cache_counter(const std::string &ifname, const dhcp_device_context_t *context, int sock, uint8_t type, bool dup_to_context=false)
@@ -60,9 +60,17 @@ static void increase_cache_counter(const std::string &ifname, const dhcp_device_
 
     increase_single_cache_counter(dhcp_devman_get_agg_counter_ifname(ifname), sock, type);
     
-    // optionally duplicate to context ifname, it will only be true when this is standby physical interface under a vlan on a dual tor
     if (dup_to_context) {
-        increase_cache_counter(std::string(context->intf), context, sock, type);
+        const std::string context_ifname(context->intf);
+        const std::string parent_ifname = dhcp_devman_get_parent_ifname(ifname);
+        const std::string next_ifname = parent_ifname.empty() ? context_ifname : parent_ifname;
+
+        // Preserve existing DualToR attribution in this PR: logical counters are rebuilt
+        // from MUX-filtered physical RX instead of raw logical callbacks. A follow-up will
+        // validate active/standby callback layers and remove this recursion; per-layer
+        // aggregate counters can drive health directly without copying through
+        // physical-to-PortChannel-to-VLAN.
+        increase_cache_counter(next_ifname, context, sock, type, next_ifname != context_ifname);
     }
 }
 
@@ -375,23 +383,34 @@ static bool validate_udp_checksum(struct udphdr *udphdr, const uint8_t *buffer, 
 }
 
 /**
- * @code should_ignore_rx_packet(intf, context);
- * @brief ignore when intf is dualtor downlink context interface or standby physical interface
- * @return boolean
+ * @code should_ignore_rx_packet(ifname, context);
+ * @brief Preserve existing DualToR attribution by ignoring raw logical RX and
+ *        standby physical RX on a downlink context.
+ * @param ifname Observed interface name
+ * @param context Tracked interface context
+ * @return true when the observation should not update counters
  */
 static bool should_ignore_rx_packet(const std::string &ifname, const dhcp_device_context_t *context)
 {
-    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK && (ifname == context->intf || intf_is_standby(ifname));
+    const bool logical_interface =
+        ifname == context->intf || rev_portchan_map.find(ifname) != rev_portchan_map.end();
+    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK &&
+           (logical_interface || intf_is_standby(ifname));
 }
 
 /**
- * @code should_dup_rx_packet(intf, context);
- * @brief duplicate rx packet when intf is different from context interface and not standby physical interface
- * @return boolean
+ * @code should_dup_rx_packet(ifname, context);
+ * @brief Identify accepted DualToR downlink physical RX that must rebuild its
+ *        logical parent path.
+ * @param ifname Observed interface name
+ * @param context Tracked interface context
+ * @return true for a non-standby physical observation on a DualToR downlink
  */
 static bool should_dup_rx_packet(const std::string &ifname, const dhcp_device_context_t *context)
 {
-    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK && ifname != context->intf && !intf_is_standby(ifname);
+    return dual_tor_mode && context->intf_type == DHCP_DEVICE_INTF_TYPE_DOWNLINK &&
+           ifname != context->intf && rev_portchan_map.find(ifname) == rev_portchan_map.end() &&
+           !intf_is_standby(ifname);
 }
 
 /**
@@ -643,11 +662,10 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     // For single tor and dualtor uplink, no special care is needed
     // For dualtor, rx packets come from downlink standby interfaces will be ignored, hence directly
     // to prevent mis-count, on dualtor downlink
-    //   - Ignore packet captured in context interface and standby physical interface
-    //   - When capture packet in non-standby physical interface, update context interface and physical
-    //     interface count together
+    //   - Ignore packets captured on logical interfaces and standby physical interfaces
+    //   - Reconstruct the logical path from each accepted physical observation
     if (sock_info.is_rx && should_ignore_rx_packet(ifname, context)) {
-        syslog_debug(LOG_INFO, "packet_handler %s: ignore packet on interface %s, context %s, because is dual tor downlink standby interface",
+        syslog_debug(LOG_INFO, "packet_handler %s: ignore packet on interface %s, context %s, because it is a dual tor downlink logical or standby interface",
                      sock_info.name, ifname.c_str(), context->intf);
         return;
     }
@@ -770,9 +788,9 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 
     syslog_debug(LOG_INFO, "packet_handler_v6 %s: handle packet on interface %s, context %s, buffer size %zd", sock_info.name, ifname.c_str(), context->intf, buffer_sz);
 
-    //similar to ipv4 packet handler, need to ignore rx packets on dualtor downlink standby interfaces
+    // Similar to IPv4, ignore DualToR downlink RX on logical or standby interfaces.
     if (sock_info.is_rx && should_ignore_rx_packet(ifname, context)) {
-        syslog_debug(LOG_INFO, "packet_handler_v6 %s: ignore packet on interface %s, context %s, because is dual tor downlink standby interface",
+        syslog_debug(LOG_INFO, "packet_handler_v6 %s: ignore packet on interface %s, context %s, because it is a dual tor downlink logical or standby interface",
                      sock_info.name, ifname.c_str(), context->intf);
         return;
     }
