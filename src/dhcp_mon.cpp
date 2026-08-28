@@ -12,6 +12,7 @@
 #include <sys/syscall.h>
 #include <assert.h>
 #include <chrono>
+#include <atomic>
 #include <algorithm>
 #include <event2/thread.h>
 #include <memory>
@@ -45,6 +46,8 @@ static constexpr int MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC = 5;
 static constexpr int CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC = 1;
 /** Mutex lock to modify write_counter_to_db for different threads */
 static std::mutex db_sync_mutex;
+/** Whether completed counter synchronization requires a new health snapshot */
+static std::atomic<bool> counter_sync_snapshot_pending{false};
 /** tag for db_update event */
 static const char db_update_tag[] = "DB_UPDATE";
 /** Latest timestamp of writing cache counter to COUNTERS_DB */
@@ -378,6 +381,7 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     // we leave it to db updater to handle it
     if (sock_mgr_pause_write_cache_to_db_all_cleared()) {
         syslog(LOG_INFO, "All sockets cleared pause_write_cache_to_db, start write back to DB counter from cache counter");
+        counter_sync_snapshot_pending = true;
         main_event_mgr->activate_all_events(db_update_tag, EV_TIMEOUT);
     }
 }
@@ -396,6 +400,21 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
 static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
+
+    std::unique_lock<std::mutex> lock(db_sync_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !sock_mgr_pause_write_cache_to_db_all_cleared()) {
+        syslog_debug(LOG_INFO, "Skip DHCP relay health check while counter synchronization is in progress");
+        return;
+    }
+
+    if (counter_sync_snapshot_pending.exchange(false)) {
+        syslog_debug(LOG_INFO, "Skip DHCP relay health check after counter synchronization");
+        lock.unlock();
+        sock_mgr_update_snapshot();
+        return;
+    }
+
+    lock.unlock();
 
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
@@ -431,6 +450,7 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
         if (elapsed.count() >= clear_counter_timeout) {
             syslog(LOG_WARNING, "Clear counter going on for too long, abort clear counter");
             sock_mgr_clear_pause_write_cache_to_db();
+            counter_sync_snapshot_pending = true;
         } else {
             syslog(LOG_INFO, "Clear counter is ongoing, skip syncing write cache counter to DB counter");
             return;
