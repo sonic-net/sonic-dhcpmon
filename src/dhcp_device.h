@@ -135,7 +135,7 @@ typedef enum
     DHCP_DEVICE_CHECK_NEGATIVE,            /** Presence of relayed DHCP packets activity is flagged as unhealthy state */
     DHCP_DEVICE_CHECK_POSITIVE,            /** Validate that received DORA packets are relayed */
     DHCP_DEVICE_CHECK_NEGATIVE_V6,         /** Presence of relayed DHCPv6 packets activity is flagged as unhealthy state */
-    DHCP_DEVICE_CHECK_POSITIVE_V6,         /** Validate that received SARR packets are relayed */
+    DHCP_DEVICE_CHECK_POSITIVE_V6,         /** Validate SARR and DHCPv6 relay-wrapper transformations */
     DHCP_DEVICE_CHECK_AGG_RX,              /** Compare IPv4 RX on a parent interface with its member aggregate */
     DHCP_DEVICE_CHECK_AGG_TX,              /** Compare IPv4 TX on a parent interface with its member aggregate */
     DHCP_DEVICE_CHECK_AGG_RX_V6,           /** Compare IPv6 RX on a parent interface with its member aggregate */

@@ -56,6 +56,18 @@ const dhcpv6_message_type_t monitored_v6_msgs[] = {
 
 uint8_t monitored_v6_msg_sz = sizeof(monitored_v6_msgs) / sizeof(*monitored_v6_msgs);
 
+static const int monitored_v6_forward_rx_msgs[] = {
+    DHCPV6_MESSAGE_TYPE_SOLICIT,
+    DHCPV6_MESSAGE_TYPE_REQUEST,
+    DHCPV6_MESSAGE_TYPE_RELAY_FORW
+};
+
+static const int monitored_v6_reply_tx_msgs[] = {
+    DHCPV6_MESSAGE_TYPE_ADVERTISE,
+    DHCPV6_MESSAGE_TYPE_REPLY,
+    DHCPV6_MESSAGE_TYPE_RELAY_REPL
+};
+
 const char *intf_type_name[DHCP_DEVICE_INTF_TYPE_COUNT] = {
     [DHCP_DEVICE_INTF_TYPE_UPLINK] =  "uplink (north)",
     [DHCP_DEVICE_INTF_TYPE_DOWNLINK] = "downlink (south)",
@@ -104,31 +116,19 @@ static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock
 }
 
 /**
- * @code dhcp_device_check_positive_health(ifname);
- * @brief Check that DHCP relayed messages are being transmitted out of this interface/dev
- *        using its counters. The interface is positively healthy if there are DHCP message
- *        travelling through it.
- * @param ifname           interface name
- * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ * @code get_counter_delta(ifname, sock, msg_type);
+ * @brief Get the increase in one message-type counter since the last snapshot.
+ * @param ifname interface name
+ * @param sock socket containing the counter
+ * @param msg_type message type
+ * @return counter increase since the last snapshot, or zero after a counter decrease
  */
-static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &ifname)
+static uint64_t get_counter_delta(const std::string &ifname, int sock, int msg_type)
 {
-    return check_counter_not_transmitted(ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
-}
-
-/**
- * @code dhcp_device_check_positive_health_v6(ifname);
- * @brief Check that DHCPv6 relayed messages are being transmitted out of this interface/dev
- *        using its counters. The interface is positively healthy if there are DHCPv6 message
- *        travelling through it.
- * @param ifname           interface name
- * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
- */
-static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &ifname)
-{
-   return  check_counter_not_transmitted(ifname, rx_sock_v6, tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz) ?
-           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
+    const sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
+    const uint64_t current = sock_info.all_counters.at(ifname).at(msg_type);
+    const uint64_t snapshot = sock_info.all_counters_snapshot.at(ifname).at(msg_type);
+    return current > snapshot ? current - snapshot : 0;
 }
 
 /**
@@ -156,6 +156,42 @@ static bool check_counter_increased(const std::string &ifname, int sock, const i
         }
     }
     return false;
+}
+
+/**
+ * @code dhcp_device_check_positive_health(ifname);
+ * @brief Check that RX Discover, Offer, Request, and Ack activity has matching same-type TX activity.
+ * @param ifname           interface name
+ * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ */
+static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &ifname)
+{
+    return check_counter_not_transmitted(ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz) ?
+           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
+}
+
+/**
+ * @code dhcp_device_check_positive_health_v6(ifname);
+ * @brief Check that RX Solicit, Request, or Relay-Forward activity has TX Relay-Forward activity,
+ *        and RX Relay-Reply activity has TX Advertise, Reply, or Relay-Reply activity.
+ * @param ifname interface name
+ * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ */
+static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &ifname)
+{
+    const bool forward_rx = check_counter_increased(
+        ifname, rx_sock_v6, monitored_v6_forward_rx_msgs,
+        sizeof(monitored_v6_forward_rx_msgs) / sizeof(*monitored_v6_forward_rx_msgs));
+    const bool forward_tx = get_counter_delta(ifname, tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW) > 0;
+    const bool reply_rx = get_counter_delta(ifname, rx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_REPL) > 0;
+    const bool reply_tx = check_counter_increased(
+        ifname, tx_sock_v6, monitored_v6_reply_tx_msgs,
+        sizeof(monitored_v6_reply_tx_msgs) / sizeof(*monitored_v6_reply_tx_msgs));
+
+    if ((forward_rx && !forward_tx) || (reply_rx && !reply_tx)) {
+        return DHCP_MON_STATUS_UNHEALTHY;
+    }
+    return forward_rx || reply_rx ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
