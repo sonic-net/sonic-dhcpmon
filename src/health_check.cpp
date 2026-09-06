@@ -24,6 +24,9 @@ extern std::string mgmt_ifname;
 
 extern std::string agg_dev_all;
 
+extern bool dhcpv4_enabled;
+extern bool dhcpv6_enabled;
+
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
@@ -67,28 +70,28 @@ void initialize_dhcp_relay_health()
     state_data.clear();
 
     state_data.push_back({agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE, alert_dhcp_relay_disparity,
-                          relay_disparity_error, 0});
+                          relay_disparity_error, 0, false});
     if (mgmt_ifname.size() > 0) {
-        state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE, NULL, mgmt_error, 0});
+        state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE, NULL, mgmt_error, 0, false});
     }
     state_data.push_back({agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE_V6, alert_dhcp_relay_disparity,
-                          relay_disparity_error, 0});
+                          relay_disparity_error, 0, true});
     if (mgmt_ifname.size() > 0) {
-        state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE_V6, NULL, mgmt_error, 0});
+        state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE_V6, NULL, mgmt_error, 0, true});
     }
 
     for (const auto &[vlan, _] : rev_vlan_map) {
-        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_RX, NULL, agg_rx_disparity_error, 0});
-        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_TX, NULL, agg_tx_disparity_error, 0});
-        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_RX_V6, NULL, agg_rx_v6_disparity_error, 0});
-        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_TX_V6, NULL, agg_tx_v6_disparity_error, 0});
+        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_RX, NULL, agg_rx_disparity_error, 0, false});
+        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_TX, NULL, agg_tx_disparity_error, 0, false});
+        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_RX_V6, NULL, agg_rx_v6_disparity_error, 0, true});
+        state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_TX_V6, NULL, agg_tx_v6_disparity_error, 0, true});
     }
 
     for (const auto &[portchan, _] : rev_portchan_map) {
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_RX, NULL, agg_rx_disparity_error, 0});
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_TX, NULL, agg_tx_disparity_error, 0});
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_RX_V6, NULL, agg_rx_v6_disparity_error, 0});
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_TX_V6, NULL, agg_tx_v6_disparity_error, 0});
+        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_RX, NULL, agg_rx_disparity_error, 0, false});
+        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_TX, NULL, agg_tx_disparity_error, 0, false});
+        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_RX_V6, NULL, agg_rx_v6_disparity_error, 0, true});
+        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_TX_V6, NULL, agg_tx_v6_disparity_error, 0, true});
     }
 }
 
@@ -97,6 +100,10 @@ void check_dhcp_relay_health()
     syslog_debug(LOG_INFO, "Checking DHCP relay health");
 
     for (auto &state : state_data) {
+        if ((state.is_v6 && !dhcpv6_enabled) ||
+            (!state.is_v6 && !dhcpv4_enabled)) {
+            continue;
+        }
         dhcp_mon_status_t dhcp_mon_status = dhcp_device_get_status(state.ifname, state.check_type);
         switch (dhcp_mon_status) {
             case DHCP_MON_STATUS_UNHEALTHY:

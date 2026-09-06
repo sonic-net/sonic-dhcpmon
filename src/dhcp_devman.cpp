@@ -19,6 +19,8 @@
 #include <swss/subscriberstatetable.h>
 
 bool dual_tor_mode = false;
+bool dhcpv4_enabled = false;
+bool dhcpv6_enabled = false;
 
 in_addr vlan_ip = {0};
 in6_addr vlan_ipv6_gua = {0};
@@ -26,12 +28,10 @@ in6_addr vlan_ipv6_lla = {0};
 
 in_addr loopback_ip = {0};
 in6_addr loopback_ipv6_gua = {0};
-in6_addr loopback_ipv6_lla = {0};
 
 in_addr giaddr_ip = {0};
 in_addr zero_ip = {0};
 in6_addr giaddr_ipv6_gua = {0};
-in6_addr giaddr_ipv6_lla = {0};
 in6_addr zero_ipv6 = {0};
 
 in_addr broadcast_ip = {.s_addr = INADDR_BROADCAST};
@@ -162,13 +162,11 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
             break;
         }
 
-        dhcp_device_get_ip(&loopback_context, &loopback_ip, &loopback_ipv6_gua, &loopback_ipv6_lla);
+        dhcp_device_get_ip(&loopback_context, &loopback_ip, &loopback_ipv6_gua, NULL);
         syslog(LOG_INFO, "Set loopback_ip to %s", 
                generate_addr_string((const uint8_t *)&loopback_ip, sizeof(loopback_ip)).c_str());
         syslog(LOG_INFO, "Set loopback_ipv6_gua to %s", 
                generate_addr_string((const uint8_t *)&loopback_ipv6_gua, sizeof(loopback_ipv6_gua)).c_str());
-        syslog(LOG_INFO, "Set loopback_ipv6_lla to %s", 
-               generate_addr_string((const uint8_t *)&loopback_ipv6_lla, sizeof(loopback_ipv6_lla)).c_str());
         dual_tor_mode = true;
         syslog(LOG_INFO, "Set dual_tor_mode to true");
 
@@ -264,13 +262,50 @@ int dhcp_devman_init()
         return -1;
     }
 
+    // IPv4: VLAN IPv4 && (!DualToR || Loopback0 IPv4)
+    // IPv6: VLAN GUA && VLAN LLA && (!DualToR || Loopback0 GUA)
+    bool vlan_has_ipv4 = vlan_ip.s_addr != INADDR_ANY;
+    bool vlan_has_ipv6_gua = !IN6_IS_ADDR_UNSPECIFIED(&vlan_ipv6_gua);
+    bool vlan_has_ipv6_lla = !IN6_IS_ADDR_UNSPECIFIED(&vlan_ipv6_lla);
+    bool loopback_has_ipv4 = loopback_ip.s_addr != INADDR_ANY;
+    bool loopback_has_ipv6_gua = !IN6_IS_ADDR_UNSPECIFIED(&loopback_ipv6_gua);
+
+    dhcpv4_enabled = vlan_has_ipv4 &&
+                     (!dual_tor_mode || loopback_has_ipv4);
+    dhcpv6_enabled = vlan_has_ipv6_gua &&
+                     vlan_has_ipv6_lla &&
+                     (!dual_tor_mode || loopback_has_ipv6_gua);
+
+    if (!vlan_has_ipv4) {
+        syslog(LOG_WARNING, "DHCPv4 monitoring disabled for %s: downstream IPv4 address is unavailable",
+               downstream_ifname.c_str());
+    }
+    if (!vlan_has_ipv6_gua || !vlan_has_ipv6_lla) {
+        syslog(LOG_WARNING, "DHCPv6 monitoring disabled for %s: downstream IPv6 GUA and LLA are required "
+               "(GUA=%s, LLA=%s)", downstream_ifname.c_str(),
+               vlan_has_ipv6_gua ? "available" : "missing",
+               vlan_has_ipv6_lla ? "available" : "missing");
+    }
+    if (dual_tor_mode && !loopback_has_ipv4) {
+        syslog(LOG_WARNING, "DHCPv4 monitoring disabled for %s: Dual-ToR loopback IPv4 address is unavailable",
+               downstream_ifname.c_str());
+    }
+    if (dual_tor_mode && !loopback_has_ipv6_gua) {
+        syslog(LOG_WARNING, "DHCPv6 monitoring disabled for %s: Dual-ToR loopback IPv6 GUA is unavailable",
+               downstream_ifname.c_str());
+    }
+    if (!dhcpv4_enabled && !dhcpv6_enabled) {
+        syslog(LOG_ALERT, "No address family satisfies monitoring requirements for %s", downstream_ifname.c_str());
+        return -1;
+    }
+    syslog(LOG_INFO, "Enabled DHCP monitoring families for %s: IPv4=%s, IPv6=%s",
+           downstream_ifname.c_str(), dhcpv4_enabled ? "true" : "false", dhcpv6_enabled ? "true" : "false");
+
     giaddr_ip = dual_tor_mode ? loopback_ip : vlan_ip;
     giaddr_ipv6_gua = dual_tor_mode ? loopback_ipv6_gua : vlan_ipv6_gua;
-    giaddr_ipv6_lla = dual_tor_mode ? loopback_ipv6_lla : vlan_ipv6_lla;
     inet_pton(AF_INET6, dhcpv6_multicast_ipv6_str, &dhcpv6_multicast_ipv6);
     syslog(LOG_INFO, "Set giaddr_ip to %s", generate_addr_string((const uint8_t *)&giaddr_ip, sizeof(in_addr)).c_str());
     syslog(LOG_INFO, "Set giaddr_ipv6_gua to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_gua, sizeof(in6_addr)).c_str());
-    syslog(LOG_INFO, "Set giaddr_ipv6_lla to %s", generate_addr_string((const uint8_t *)&giaddr_ipv6_lla, sizeof(in6_addr)).c_str());
     syslog(LOG_INFO, "Set dhcpv6_multicast_ipv6 to %s", generate_addr_string((const uint8_t *)&dhcpv6_multicast_ipv6, sizeof(in6_addr)).c_str());
 
     // set dhcp check profile pointers to first relay (T0/M0)
@@ -297,6 +332,8 @@ int dhcp_devman_init()
 
 void dhcp_devman_free()
 {
+    dhcpv4_enabled = false;
+    dhcpv6_enabled = false;
     vlan_map.clear();
     portchan_map.clear();
     for (const auto &[ifname, context] : intfs) {

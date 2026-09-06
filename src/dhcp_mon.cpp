@@ -113,7 +113,7 @@ static void initialize_db_counters(const std::string &ifname)
     init_value = generate_json_string(NULL, DHCP_MESSAGE_TYPE_COUNT, db_counter_name);
     mCountersDbPtr->hset(table_name, "RX", init_value);
     mCountersDbPtr->hset(table_name, "TX", init_value);
-    
+
     table_name = construct_counter_db_table_key(ifname, true);
     init_value = generate_json_string(NULL, DHCPV6_MESSAGE_TYPE_COUNT, db_counter_name_v6);
     mCountersDbPtr->hset(table_name, "RX", init_value);
@@ -155,7 +155,7 @@ static bool db_counters_initialized(const std::string &ifname)
 
 /**
  * @code              initialize_all_counters(ifname, init_db);
- * @brief             Initialize both db counters (we do not for agg device) and cache counters for given interface name
+ * @brief             Initialize both-family db counters and enabled-family cache counters for the given interface
  * @param ifname      interface name
  * @param init_db     whether to initialize db counters
  * @return            none
@@ -180,8 +180,7 @@ static bool all_counters_initialized(const std::string &ifname)
 
 /**
  * @code              cleanup_stale_db_counters();
- * @brief             Clean up stale counter entries in counters_db for interfaces that are no longer present
- *                    (not in intfs map)
+ * @brief             Clean up stale counter entries for interfaces that are no longer present
  * @param             none
  * @return            none
  */
@@ -206,6 +205,35 @@ static void cleanup_stale_db_counters()
 }
 
 /**
+ * @code update_disabled_cache_counter();
+ *
+ * @brief complete cache update synchronization for disabled address families
+ *
+ * A disabled family has no socket cache to update. This function assumes the
+ * completion role of update_cache_counter_callback by marking both directions
+ * done in STATE_DB for each disabled family without modifying cache counters.
+ *
+ * @return none
+ */
+static void update_disabled_cache_counter()
+{
+    std::lock_guard<std::mutex> lock(db_sync_mutex);
+
+    if (!dhcpv4_enabled) {
+        std::string state_key = STATE_DB_COUNTER_UPDATE_PREFIX + downstream_ifname;
+        mStateDbPtr->hset(state_key, "rx_cache_update", "done");
+        mStateDbPtr->hset(state_key, "tx_cache_update", "done");
+        syslog(LOG_INFO, "Set DHCPv4 cache update done in STATE_DB; monitoring is disabled");
+    }
+    if (!dhcpv6_enabled) {
+        std::string state_key = STATE_DB_COUNTER_UPDATE_V6_PREFIX + downstream_ifname;
+        mStateDbPtr->hset(state_key, "rx_cache_update", "done");
+        mStateDbPtr->hset(state_key, "tx_cache_update", "done");
+        syslog(LOG_INFO, "Set DHCPv6 cache update done in STATE_DB; monitoring is disabled");
+    }
+}
+
+/**
  * @code signal_callback(fd, event, arg);
  *
  * @brief signal handler for dhcpmon.
@@ -219,9 +247,13 @@ static void cleanup_stale_db_counters()
 static void signal_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog(LOG_INFO, "Received signal: %s", strsignal(fd));
-    
-    dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT);
-    dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT_V6);
+
+    if (dhcpv4_enabled) {
+        dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT);
+    }
+    if (dhcpv6_enabled) {
+        dhcp_devman_print_all_status(DHCP_COUNTERS_CURRENT_V6);
+    }
 
     if ((fd == SIGTERM) || (fd == SIGINT)) {
         syslog(LOG_INFO, "Received signal to stop dhcpmon");
@@ -240,6 +272,7 @@ static void signal_callback(evutil_socket_t fd, short event, void *arg)
     if (fd == SIGUSR2) {
         syslog(LOG_INFO, "Received signal to sync DB counter to cache counter");
         sock_mgr_trigger_cache_counter_updater();
+        update_disabled_cache_counter();
     }
 }
 
@@ -416,10 +449,14 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 
     lock.unlock();
 
-    dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
-    dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
-    dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT_V6);
-    dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT_V6);
+    if (dhcpv4_enabled) {
+        dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
+        dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
+    }
+    if (dhcpv6_enabled) {
+        dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT_V6);
+        dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT_V6);
+    }
 
     check_dhcp_relay_health();
 

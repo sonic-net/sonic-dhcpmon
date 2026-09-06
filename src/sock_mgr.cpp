@@ -17,11 +17,12 @@
 
 #include "sock_mgr.h"
 
+#include "dhcp_devman.h"      /** for enabled address families */
 #include "packet_handler.h"     /** for attaching packet handler */
 #include "util.h"               /** for db counter key generation */
 #include <swss/subscriberstatetable.h>
 
-int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
+int rx_sock = -1, tx_sock = -1, rx_sock_v6 = -1, tx_sock_v6 = -1;
 
 /** String identifier of sock fd for printing */
 static const char rx_sock_name[] = "rx";
@@ -79,6 +80,102 @@ static int open_socket()
 }
 
 /**
+ * @code init_v4_socket();
+ *
+ * @brief initialize the DHCPv4 inbound and outbound sockets
+ *
+ * @return 0 on success, negative on failure
+ */
+static int init_v4_socket()
+{
+    rx_sock = open_socket();
+    if (rx_sock < 0) {
+        syslog(LOG_ALERT, "Failed to open and bind DHCPv4 inbound socket");
+        goto no_close;
+    }
+    tx_sock = open_socket();
+    if (tx_sock < 0) {
+        syslog(LOG_ALERT, "Failed to open and bind DHCPv4 outbound socket");
+        goto close_rx_sock;
+    }
+
+    return 0;
+
+close_rx_sock:
+    close(rx_sock);
+    rx_sock = -1;
+no_close:
+    return -1;
+}
+
+/**
+ * @code free_v4_socket();
+ *
+ * @brief close the initialized DHCPv4 sockets
+ *
+ * @return none
+ */
+static void free_v4_socket()
+{
+    if (tx_sock >= 0) {
+        close(tx_sock);
+        tx_sock = -1;
+    }
+    if (rx_sock >= 0) {
+        close(rx_sock);
+        rx_sock = -1;
+    }
+}
+
+/**
+ * @code init_v6_socket();
+ *
+ * @brief initialize the DHCPv6 inbound and outbound sockets
+ *
+ * @return 0 on success, negative on failure
+ */
+static int init_v6_socket()
+{
+    rx_sock_v6 = open_socket();
+    if (rx_sock_v6 < 0) {
+        syslog(LOG_ALERT, "Failed to open and bind DHCPv6 inbound socket");
+        goto no_close;
+    }
+    tx_sock_v6 = open_socket();
+    if (tx_sock_v6 < 0) {
+        syslog(LOG_ALERT, "Failed to open and bind DHCPv6 outbound socket");
+        goto close_rx_sock_v6;
+    }
+
+    return 0;
+
+close_rx_sock_v6:
+    close(rx_sock_v6);
+    rx_sock_v6 = -1;
+no_close:
+    return -1;
+}
+
+/**
+ * @code free_v6_socket();
+ *
+ * @brief close the initialized DHCPv6 sockets
+ *
+ * @return none
+ */
+static void free_v6_socket()
+{
+    if (tx_sock_v6 >= 0) {
+        close(tx_sock_v6);
+        tx_sock_v6 = -1;
+    }
+    if (rx_sock_v6 >= 0) {
+        close(rx_sock_v6);
+        rx_sock_v6 = -1;
+    }
+}
+
+/**
  * @code init_socket();
  *
  * @brief initializes rx/tx sockets, bind it to interface and bpf program
@@ -87,42 +184,22 @@ static int open_socket()
  */
 static int init_socket()
 {
-    rx_sock = open_socket();
-    if (rx_sock < 0) {
-        syslog(LOG_ALERT, "Failed to open and bind socket");
-        goto no_close;
+    if (dhcpv4_enabled && init_v4_socket() < 0) {
+        goto no_free;
     }
-    tx_sock = open_socket();
-    if (tx_sock < 0) {
-        syslog(LOG_ALERT, "Failed to open and bind socket");
-        goto close_rx_sock;
-    }
-    rx_sock_v6 = open_socket();
-    if (rx_sock_v6 < 0) {
-        syslog(LOG_ALERT, "Failed to open and bind socket");
-        goto close_tx_sock;
-    }
-    tx_sock_v6 = open_socket();
-    if (tx_sock_v6 < 0) {
-        syslog(LOG_ALERT, "Failed to open and bind socket");
-        goto close_rx_sock_v6;
+    if (dhcpv6_enabled && init_v6_socket() < 0) {
+        goto free_v4;
     }
 
-    syslog(LOG_INFO, "Initialized all sockets successfully");
+    syslog(LOG_INFO, "Initialized enabled address-family sockets successfully");
     syslog(LOG_INFO, "  rx_sock=%d, tx_sock=%d, rx_sock_v6=%d, tx_sock_v6=%d",
            rx_sock, tx_sock, rx_sock_v6, tx_sock_v6);
 
     return 0;
 
-close_tx_sock_v6:
-    close(tx_sock_v6);
-close_rx_sock_v6:
-    close(rx_sock_v6);
-close_tx_sock:
-    close(tx_sock);
-close_rx_sock:
-    close(rx_sock);
-no_close:
+free_v4:
+    free_v4_socket();
+no_free:
     return -1;
 }
 
@@ -133,13 +210,11 @@ no_close:
  */
 static void free_socket()
 {
-    close(tx_sock_v6);
-    close(rx_sock_v6);
-    close(tx_sock);
-    close(rx_sock);
-    syslog(LOG_INFO, "Closed all opened sockets");
-    syslog(LOG_INFO, "  rx_sock=%d, tx_sock=%d, rx_sock_v6=%d, tx_sock_v6=%d",
+    syslog(LOG_INFO, "Closing sockets: rx_sock=%d, tx_sock=%d, rx_sock_v6=%d, tx_sock_v6=%d",
            rx_sock, tx_sock, rx_sock_v6, tx_sock_v6);
+    free_v6_socket();
+    free_v4_socket();
+    syslog(LOG_INFO, "Closed all opened sockets");
 }
 
 /**
@@ -199,7 +274,7 @@ static void sock_mgr_free_all_bpf_prog()
 /**
  * @code compile_all_bpf_prog();
  *
- * @brief compile all 4 tcpdump filters into classic bpf progs
+ * @brief compile all enabled tcpdump filters into classic bpf progs
  */
 static int sock_mgr_compile_all_bpf_prog()
 {
@@ -291,53 +366,57 @@ int sock_mgr_init(uint32_t snaplen)
         goto no_free;
     }
 
-    sock_map[rx_sock] = sock_info_t {
-        .sock = rx_sock,
-        .name = rx_sock_name,
-        .is_rx = true,
-        .is_v6 = false,
-        .snaplen = snaplen,
-        .filter = dhcp_inbound_filter, 
-        .all_counters = all_counters_t(),
-        .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)packet_handler,
-    };
+    if (dhcpv4_enabled) {
+        sock_map[rx_sock] = sock_info_t {
+            .sock = rx_sock,
+            .name = rx_sock_name,
+            .is_rx = true,
+            .is_v6 = false,
+            .snaplen = snaplen,
+            .filter = dhcp_inbound_filter,
+            .all_counters = all_counters_t(),
+            .all_counters_snapshot = all_counters_t(),
+            .packet_handler = (void *)packet_handler,
+        };
 
-    sock_map[tx_sock] = sock_info_t {
-        .sock = tx_sock,
-        .name = tx_sock_name,
-        .is_rx = false,
-        .is_v6 = false,
-        .snaplen = snaplen,
-        .filter = dhcp_outbound_filter, 
-        .all_counters = all_counters_t(),
-        .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)packet_handler,
-    };
+        sock_map[tx_sock] = sock_info_t {
+            .sock = tx_sock,
+            .name = tx_sock_name,
+            .is_rx = false,
+            .is_v6 = false,
+            .snaplen = snaplen,
+            .filter = dhcp_outbound_filter,
+            .all_counters = all_counters_t(),
+            .all_counters_snapshot = all_counters_t(),
+            .packet_handler = (void *)packet_handler,
+        };
+    }
 
-    sock_map[rx_sock_v6] = sock_info_t {
-        .sock = rx_sock_v6,
-        .name = rx_sock_name_v6,
-        .is_rx = true,
-        .is_v6 = true,
-        .snaplen = snaplen,
-        .filter = dhcpv6_inbound_filter, 
-        .all_counters = all_counters_t(),
-        .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)packet_handler_v6,
-    };
+    if (dhcpv6_enabled) {
+        sock_map[rx_sock_v6] = sock_info_t {
+            .sock = rx_sock_v6,
+            .name = rx_sock_name_v6,
+            .is_rx = true,
+            .is_v6 = true,
+            .snaplen = snaplen,
+            .filter = dhcpv6_inbound_filter,
+            .all_counters = all_counters_t(),
+            .all_counters_snapshot = all_counters_t(),
+            .packet_handler = (void *)packet_handler_v6,
+        };
 
-    sock_map[tx_sock_v6] = sock_info_t {
-        .sock = tx_sock_v6,
-        .name = tx_sock_name_v6,
-        .is_rx = false,
-        .is_v6 = true,
-        .snaplen = snaplen,
-        .filter = dhcpv6_outbound_filter, 
-        .all_counters = all_counters_t(),
-        .all_counters_snapshot = all_counters_t(),
-        .packet_handler = (void *)packet_handler_v6,
-    };
+        sock_map[tx_sock_v6] = sock_info_t {
+            .sock = tx_sock_v6,
+            .name = tx_sock_name_v6,
+            .is_rx = false,
+            .is_v6 = true,
+            .snaplen = snaplen,
+            .filter = dhcpv6_outbound_filter,
+            .all_counters = all_counters_t(),
+            .all_counters_snapshot = all_counters_t(),
+            .packet_handler = (void *)packet_handler_v6,
+        };
+    }
 
     if (sock_mgr_init_all_buffer() < 0) {
         syslog(LOG_ALERT, "Failed to initialize all socket buffers");

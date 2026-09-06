@@ -39,7 +39,9 @@ typedef struct {
     std::thread event_thread;
 } sock_info_t;
 
-/** sock file descriptors, serve as the identifier of all related information described in sock_info_t */
+/** sock file descriptors, serve as the identifier of all related information described in sock_info_t;
+ *  descriptors for a disabled address family remain -1
+ */
 extern int rx_sock, tx_sock, rx_sock_v6, tx_sock_v6;
 
 /** Initialize socket manager with given snaplen */

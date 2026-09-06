@@ -19,6 +19,7 @@ typedef struct
     void (*alert)(int duration);            /** alert function */
     const char *error_format;               /** threshold error format */
     int count;                              /** consecutive unhealthy checks */
+    bool is_v6;                             /** whether this state monitors DHCPv6 */
 } dhcp_mon_state_t;
 
 extern event_handle_t g_events_handle;

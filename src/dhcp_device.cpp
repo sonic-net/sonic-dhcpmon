@@ -378,6 +378,15 @@ static void dhcp_print_counters_v6(const std::string &ifname, dhcp_counters_type
 
 void dhcp_device_print_status(const std::string &ifname, dhcp_counters_type_t type)
 {
+    if ((type == DHCP_COUNTERS_CURRENT || type == DHCP_COUNTERS_SNAPSHOT) &&
+        (rx_sock < 0 || tx_sock < 0)) {
+        return;
+    }
+    if ((type == DHCP_COUNTERS_CURRENT_V6 || type == DHCP_COUNTERS_SNAPSHOT_V6) &&
+        (rx_sock_v6 < 0 || tx_sock_v6 < 0)) {
+        return;
+    }
+
     switch (type) {
         case DHCP_COUNTERS_CURRENT:
             dhcp_print_counters(ifname, type, sock_mgr_get_sock_info(rx_sock).all_counters[ifname], sock_mgr_get_sock_info(tx_sock).all_counters[ifname]);
@@ -463,6 +472,10 @@ int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context)
                generate_addr_string(context->mac, ETHER_ADDR_LEN).c_str());
         close(fd);
 
+        memset(&context->ip, 0, sizeof(context->ip));
+        memset(&context->ipv6_gua, 0, sizeof(context->ipv6_gua));
+        memset(&context->ipv6_lla, 0, sizeof(context->ipv6_lla));
+
         // Get ip address
         struct ifaddrs *ifaddr;
         int num_ip_addr = 0, num_ipv6_gua = 0, num_ipv6_lla = 0;
@@ -514,9 +527,14 @@ int initialize_intf_mac_and_ip_addr(dhcp_device_context_t *context)
         }
         freeifaddrs(ifaddr);
 
-        if (num_ip_addr != 1 || (num_ipv6_gua != 1 && num_ipv6_lla != 1)) {
-            syslog(LOG_ALERT, "Unable to find exactly 1 ip addr, 1 ipv6 GUA and 1 ipv6 LLA on physical interface "
-                   "and 1 ipv6 loopback addr on loopback interface: %s", context->intf);
+        if (num_ip_addr > 1) {
+            syslog(LOG_ALERT, "Interface %s has %d primary IPv4 addresses, expected at most 1",
+                   context->intf, num_ip_addr);
+            break;
+        }
+        if (num_ipv6_gua > 1 || num_ipv6_lla > 1) {
+            syslog(LOG_ALERT, "Interface %s has IPv6 GUA=%d and LLA=%d, expected at most 1 each",
+                   context->intf, num_ipv6_gua, num_ipv6_lla);
             break;
         }
 

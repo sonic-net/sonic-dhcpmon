@@ -172,15 +172,15 @@ typedef struct
     uint8_t mac[ETHER_ADDR_LEN];        /** hardware address of this device (interface) */
     dhcp_device_intf_t intf_type;       /** interface type: uplink, downlink, or mgmt */
     char intf[IF_NAMESIZE];             /** device (interface) name */
-    struct in_addr ip;                  /** network address of this device (interface) */
-    struct in6_addr ipv6_gua;           /** network address of this device (interface) */
-    struct in6_addr ipv6_lla;           /** link local address of this device (interface) */
+    struct in_addr ip;                  /** network address of this device (interface), zero if unavailable */
+    struct in6_addr ipv6_gua;           /** network address of this device (interface), zero if unavailable */
+    struct in6_addr ipv6_lla;           /** link local address of this device (interface), zero if unavailable */
 } dhcp_device_context_t;
 
 /**
  * @code initialize_intf_mac_and_ip_addr(context);
  *
- * @brief initializes device (interface) mac/ip addresses
+ * @brief initializes device (interface) mac/ip addresses that are available
  *
  * @param context           pointer to device (interface) context
  *

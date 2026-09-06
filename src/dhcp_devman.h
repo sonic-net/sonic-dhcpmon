@@ -24,6 +24,10 @@
 /** if we are in dual tor mode */
 extern bool dual_tor_mode;
 
+/** address families monitored for the downstream VLAN */
+extern bool dhcpv4_enabled;
+extern bool dhcpv6_enabled;
+
 /** ip information for downstream vlan interface */
 extern in_addr vlan_ip;
 extern in6_addr vlan_ipv6_gua;
@@ -32,13 +36,11 @@ extern in6_addr vlan_ipv6_lla;
 /** loopback interface ip, which will be used as the giaddr in dual tor setup. */
 extern in_addr loopback_ip;
 extern in6_addr loopback_ipv6_gua;
-extern in6_addr loopback_ipv6_lla;
 
 /** gateway ip in dhcp, used to filter packets that pertain to our downstream vlan interface */
 extern in_addr giaddr_ip;
 extern in_addr zero_ip;
 extern in6_addr giaddr_ipv6_gua;
-extern in6_addr giaddr_ipv6_lla;
 extern in6_addr zero_ipv6;
 
 extern in_addr broadcast_ip;
@@ -109,8 +111,7 @@ bool dhcp_devman_is_tracked_interface(const std::string &ifname);
 /**
  * @code dhcp_devman_init(snaplen);
  *
- * @brief initializes device (interface) manager that keeps track of interfaces and assert that there is one south
- *        interface and as many north interfaces
+ * @brief initializes the device manager, validates interface counts, and enables the downstream VLAN address families
  *
  * @return 0 on success, negative otherwise
  */
