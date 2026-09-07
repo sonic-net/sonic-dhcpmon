@@ -24,6 +24,7 @@
 #define DHCP_COUNTER_WIDTH  9
 
 extern bool debug_on;
+extern bool dhcpv4_native_relay;
 
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
@@ -143,14 +144,38 @@ static uint64_t get_health_counter_delta(
         get_health_counter_ifname(ifname), sock, msg_type);
 }
 
+static uint64_t get_vlan_health_counter_delta(
+    const std::string &vlan, int sock, int msg_type);
+
+/**
+ * @code get_context_health_counter_delta(ifname, sock, msg_type);
+ * @brief Select the counter allowed to drive overall relay health. ISC DHCPv4
+ *        uses the configured interface observation. Native DHCPv4 and DHCPv6
+ *        use physical-member evidence for VLAN and PortChannel contexts.
+ * @param ifname Configured non-management context interface
+ * @param sock Socket containing the counter
+ * @param msg_type Message type
+ * @return Selected health-counter increase since the last snapshot
+ */
+static uint64_t get_context_health_counter_delta(
+    const std::string &ifname, int sock, int msg_type)
+{
+    const bool native_relay =
+        dhcpv4_native_relay || sock == rx_sock_v6 || sock == tx_sock_v6;
+    if (!native_relay) {
+        return get_counter_delta(ifname, sock, msg_type);
+    }
+
+    return rev_vlan_map.find(ifname) == rev_vlan_map.end() ?
+           get_health_counter_delta(ifname, sock, msg_type) :
+           get_vlan_health_counter_delta(ifname, sock, msg_type);
+}
+
 /**
  * @code get_all_context_health_counter_delta(sock, msg_type);
  * @brief Get the all-context health-counter increase without reading the stored
- *        root aggregate. The downstream VLAN contribution already comes from its own
- *        counter. If an upstream PortChannel uses SONiC --fallback true, a packet can be
- *        captured on a physical fallback member without being captured on the PortChannel,
- *        so the PortChannel observation does not increment the stored root. This function
- *        instead sums the selected health counter for every non-management context.
+ *        root aggregate. Each non-management context selects configured-interface
+ *        evidence for ISC DHCPv4 or physical-member evidence for native relay.
  * @param sock Socket containing the counters
  * @param msg_type Message type
  * @return Sum of non-management context health-counter increases since the last snapshot
@@ -160,7 +185,8 @@ static uint64_t get_all_context_health_counter_delta(int sock, int msg_type)
     uint64_t delta = 0;
     for (const auto &[context_ifname, context] : intfs) {
         if (context->intf_type != DHCP_DEVICE_INTF_TYPE_MGMT) {
-            delta += get_health_counter_delta(context_ifname, sock, msg_type);
+            delta += get_context_health_counter_delta(
+                context_ifname, sock, msg_type);
         }
     }
     return delta;
