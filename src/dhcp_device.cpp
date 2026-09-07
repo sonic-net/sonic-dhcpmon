@@ -154,6 +154,9 @@ static uint32_t snap_length;
  */
 static dhcp_device_context_t aggregate_dev = {0};
 
+/* Private evidence used only for the overall DHCP relay health check. */
+static uint64_t relay_health_counters[DHCP_COUNTERS_COUNT][DHCP_DIR_COUNT][DHCP_MESSAGE_TYPE_COUNT] = {0};
+
 /** Monitored DHCP message type */
 static dhcp_message_type_t monitored_msgs[] = {
     DHCP_MESSAGE_TYPE_DISCOVER,
@@ -216,7 +219,7 @@ dhcp_device_context_t *find_device_context(std::unordered_map<std::string, struc
 static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msgs);
 
 /**
- * @code handle_dhcp_option_53(context, dhcp_option, dir, iphdr, dhcphdr);
+ * @code handle_dhcp_option_53(context, dhcp_option, dir, iphdr, dhcphdr, relay_input);
  *
  * @brief handle the logic related to DHCP option 53
  *
@@ -225,6 +228,7 @@ static uint8_t monitored_msg_sz = sizeof(monitored_msgs) / sizeof(*monitored_msg
  * @param dir           packet direction
  * @param iphdr         pointer to packet IP header
  * @param dhcphdr       pointer to DHCP header
+ * @param relay_input   whether to count downstream VLAN RX for health only
  *
  * @return none
  */
@@ -232,7 +236,8 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
                                   const u_char *dhcp_option,
                                   dhcp_packet_direction_t dir,
                                   struct ip *iphdr,
-                                  uint8_t *dhcphdr)
+                                  uint8_t *dhcphdr,
+                                  bool relay_input)
 {
     in_addr_t giaddr;
     switch (dhcp_option[2])
@@ -247,8 +252,13 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
                        dhcphdr[DHCP_GIADDR_OFFSET + 2] << 8 | dhcphdr[DHCP_GIADDR_OFFSET + 3]);
         if ((context->giaddr_ip == giaddr && context->is_uplink && dir == DHCP_TX) ||
             (!context->is_uplink && dir == DHCP_RX && iphdr->ip_dst.s_addr == INADDR_BROADCAST)) {
-            context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
-            aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            if (!relay_input) {
+                context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+                aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            }
+            if (dir == DHCP_TX || relay_input) {
+                relay_health_counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            }
         }
         break;
     // DHCP messages send by server
@@ -259,26 +269,33 @@ static void handle_dhcp_option_53(dhcp_device_context_t *context,
             (!context->is_uplink && dir == DHCP_TX)) {
             context->counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
             aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
+            relay_health_counters[DHCP_COUNTERS_CURRENT][dir][dhcp_option[2]]++;
         }
         break;
     default:
-        syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
+        if (!relay_input) {
+            syslog(LOG_WARNING, "handle_dhcp_option_53(%s): Unknown DHCP option 53 type %d", context->intf, dhcp_option[2]);
+        }
         break;
     }
 }
 
 /**
- * @code client_packet_handler(dhcp_device_context_t *context, ssize_t buffer_sz);
+ * @code client_packet_handler(context, buffer, buffer_sz, dir, relay_input);
  *
  * @brief packet handler to process received rx and tx packets
  *
  * @param context       pointer to device (interface) context
- * @param buffer_sz     buffer that stores received packet data
+ * @param buffer        buffer that stores received packet data
+ * @param buffer_sz     received packet data size
+ * @param dir           packet direction
+ * @param relay_input   whether to count downstream VLAN RX for health only
  *
  * @return none
  */
 static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffer,
-                                  ssize_t buffer_sz, dhcp_packet_direction_t dir)
+                                  ssize_t buffer_sz, dhcp_packet_direction_t dir,
+                                  bool relay_input)
 {
     struct ip *iphdr = (struct ip*) (buffer + IP_START_OFFSET);
     struct udphdr *udp = (struct udphdr*) (buffer + UDP_START_OFFSET);
@@ -296,15 +313,17 @@ static void client_packet_handler(dhcp_device_context_t *context, uint8_t *buffe
                                 dhcphdr[MAGIC_COOKIE_OFFSET + 2] << 8 | dhcphdr[MAGIC_COOKIE_OFFSET + 3];
         // If magic cookie not equals to DHCP value, its format is not DHCP format, shouldn't count as DHCP packets.
         if (magic_cookie != DHCP_MAGIC_COOKIE) {
-            context->counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
-            aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
+            if (!relay_input) {
+                context->counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
+                aggregate_dev.counters[DHCP_COUNTERS_CURRENT][dir][BOOTP_MESSAGE]++;
+            }
             return;
         }
         int offset = 0;
         while ((offset < (dhcp_option_sz + 1)) && dhcp_option[offset] != 255) {
             if (dhcp_option[offset] == OPTION_DHCP_MESSAGE_TYPE) {
                 if (offset < (dhcp_option_sz + 2)) {
-                    handle_dhcp_option_53(context, &dhcp_option[offset], dir, iphdr, dhcphdr);
+                    handle_dhcp_option_53(context, &dhcp_option[offset], dir, iphdr, dhcphdr, relay_input);
                 }
                 break; // break while loop since we are only interested in Option 53
             }
@@ -392,7 +411,7 @@ static void read_tx_callback(int fd, short event, void *arg)
         std::string intf(interfaceName);
         context = find_device_context(devices, intf);
         if (context) {
-            client_packet_handler(context, tx_recv_buffer, buffer_sz, DHCP_TX);
+            client_packet_handler(context, tx_recv_buffer, buffer_sz, DHCP_TX, false);
         }
     }
 }
@@ -430,7 +449,13 @@ static void read_rx_callback(int fd, short event, void *arg)
             if (!dual_tor_sock && !context->is_uplink && intf.rfind("PortChannel", 0) == 0) {
                 continue;
             }
-            client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
+            client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX, false);
+        } else if (!dual_tor_sock) {
+            // VLAN-SVI RX is health evidence only; visible RX remains attributed from members.
+            context = find_device_context(devices, intf);
+            if (context && !context->is_uplink) {
+                client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX, true);
+            }
         }
     }
 }
@@ -865,7 +890,13 @@ dhcp_mon_status_t dhcp_device_get_status(dhcp_mon_check_t check_type, dhcp_devic
     dhcp_mon_status_t rv = DHCP_MON_STATUS_HEALTHY;
 
     if (context != NULL) {
-        rv = dhcp_device_check_health(check_type, context->counters);
+        if (!dual_tor_sock && check_type == DHCP_MON_CHECK_POSITIVE && context == &aggregate_dev) {
+            rv = dhcp_device_is_dhcp_inactive(relay_health_counters) ?
+                 DHCP_MON_STATUS_INDETERMINATE :
+                 dhcp_device_check_positive_health(relay_health_counters);
+        } else {
+            rv = dhcp_device_check_health(check_type, context->counters);
+        }
     }
 
     return rv;
@@ -882,6 +913,11 @@ void dhcp_device_update_snapshot(dhcp_device_context_t *context)
         memcpy(context->counters[DHCP_COUNTERS_SNAPSHOT],
                context->counters[DHCP_COUNTERS_CURRENT],
                sizeof(context->counters[DHCP_COUNTERS_SNAPSHOT]));
+        if (context == &aggregate_dev) {
+            memcpy(relay_health_counters[DHCP_COUNTERS_SNAPSHOT],
+                   relay_health_counters[DHCP_COUNTERS_CURRENT],
+                   sizeof(relay_health_counters[DHCP_COUNTERS_SNAPSHOT]));
+        }
     }
 }
 
