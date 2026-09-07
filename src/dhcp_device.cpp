@@ -24,8 +24,11 @@
 #define DHCP_COUNTER_WIDTH  9
 
 extern bool debug_on;
+extern bool dhcpv4_native_relay;
 
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
+extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
+extern std::unordered_map<std::string, dhcp_device_context_t *> intfs;
 
 const std::string db_counter_name[DHCP_MESSAGE_TYPE_COUNT] = {
     "Unknown", "Discover", "Offer", "Request", "Decline", "Ack", "Nak", "Release", "Inform", "Bootp", "Malformed", "Ignored"
@@ -83,37 +86,15 @@ static const char *counter_desc[DHCP_COUNTERS_COUNT] = {
 };
 
 /**
- * @code check_counter_not_transmitted(ifname, rx_sock, tx_sock, monitored_msgs, monitored_msg_cnt);
- * @brief Check if there are received DHCP messages that are not transmitted out
- *        of this interface/device using its counters.
- * @param ifname            interface name
- * @param rx_sock           rx socket
- * @param tx_sock           tx socket
- * @param monitored_msgs    array of monitored message types
- * @param monitored_msg_cnt number of monitored message types
- * @return                  true if there are received messages not transmitted out, false otherwise
+ * A packet observed on RX but not TX, or vice versa, may indicate a real
+ * mismatch, or the matching observation may simply not have occurred before
+ * the snapshot. Tolerate one such in-flight packet to avoid a false positive.
+ *
+ * For a one-to-one relationship, one in-flight packet permits a difference of
+ * one on the other side. For a one-to-N fan-out, that packet may have produced
+ * anywhere from zero to N member observations when the snapshot is taken.
  */
-// these helpers use const int * to accept both dhcp_message_type_t and dhcpv6_message_type_t arrays
-// without duplicating the function for each enum type; safe on GCC/Linux where unscoped enums use int
-static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock, int tx_sock, const int *monitored_msgs, size_t monitored_msg_cnt)
-{
-    const sock_info_t &rx_sock_info = sock_mgr_get_sock_info(rx_sock);
-    const counter_t &rx_counters = rx_sock_info.all_counters.at(ifname);
-    const counter_t &rx_counters_snapshot = rx_sock_info.all_counters_snapshot.at(ifname);
-
-    const sock_info_t &tx_sock_info = sock_mgr_get_sock_info(tx_sock);
-    const counter_t &tx_counters = tx_sock_info.all_counters.at(ifname);
-    const counter_t &tx_counters_snapshot = tx_sock_info.all_counters_snapshot.at(ifname);
-
-    // when there is packet in, no packet out
-    for (size_t i = 0; i < monitored_msg_cnt; i++) {
-        if (rx_counters.at(monitored_msgs[i]) > rx_counters_snapshot.at(monitored_msgs[i]) &&
-            tx_counters.at(monitored_msgs[i]) <= tx_counters_snapshot.at(monitored_msgs[i])) {
-            return true;
-        }
-    }
-    return false;
-}
+static constexpr uint64_t INFLIGHT_PACKET_TOLERANCE = 1;
 
 /**
  * @code get_counter_delta(ifname, sock, msg_type);
@@ -129,6 +110,167 @@ static uint64_t get_counter_delta(const std::string &ifname, int sock, int msg_t
     const uint64_t current = sock_info.all_counters.at(ifname).at(msg_type);
     const uint64_t snapshot = sock_info.all_counters_snapshot.at(ifname).at(msg_type);
     return current > snapshot ? current - snapshot : 0;
+}
+
+/**
+ * @code get_health_counter_ifname(ifname);
+ * @brief Select the counter used for health checks. With a SONiC PortChannel configured
+ *        using --fallback true, a packet can be captured on a physical fallback member
+ *        without being captured on the PortChannel. PortChannels therefore use their
+ *        physical-member aggregate; non-PortChannel interface names are returned unchanged.
+ * @param ifname Non-aggregate interface name; Agg-* counter names are not valid inputs
+ * @return Physical-member aggregate counter name for a PortChannel, otherwise ifname
+ */
+static std::string get_health_counter_ifname(const std::string &ifname)
+{
+    const auto members = rev_portchan_map.find(ifname);
+    return members == rev_portchan_map.end() ?
+           ifname : get_agg_counter_ifname(ifname);
+}
+
+/**
+ * @code get_health_counter_delta(ifname, sock, msg_type);
+ * @brief Get one interface's health-counter increase, substituting the physical-member
+ *        aggregate only when the interface is a PortChannel.
+ * @param ifname Non-aggregate interface name whose health is being checked
+ * @param sock Socket containing the counter
+ * @param msg_type Message type
+ * @return PortChannel physical-member aggregate increase, or the interface's own increase
+ */
+static uint64_t get_health_counter_delta(
+    const std::string &ifname, int sock, int msg_type)
+{
+    return get_counter_delta(
+        get_health_counter_ifname(ifname), sock, msg_type);
+}
+
+static uint64_t get_vlan_health_counter_delta(
+    const std::string &vlan, int sock, int msg_type);
+
+/**
+ * @code get_context_health_counter_delta(ifname, sock, msg_type);
+ * @brief Select the counter allowed to drive overall relay health. ISC DHCPv4
+ *        uses the configured interface observation. Native DHCPv4 and DHCPv6
+ *        use physical-member evidence for VLAN and PortChannel contexts.
+ * @param ifname Configured non-management context interface
+ * @param sock Socket containing the counter
+ * @param msg_type Message type
+ * @return Selected health-counter increase since the last snapshot
+ */
+static uint64_t get_context_health_counter_delta(
+    const std::string &ifname, int sock, int msg_type)
+{
+    const bool native_relay =
+        dhcpv4_native_relay || sock == rx_sock_v6 || sock == tx_sock_v6;
+    if (!native_relay) {
+        return get_counter_delta(ifname, sock, msg_type);
+    }
+
+    return rev_vlan_map.find(ifname) == rev_vlan_map.end() ?
+           get_health_counter_delta(ifname, sock, msg_type) :
+           get_vlan_health_counter_delta(ifname, sock, msg_type);
+}
+
+/**
+ * @code get_all_context_health_counter_delta(sock, msg_type);
+ * @brief Get the all-context health-counter increase without reading the stored
+ *        root aggregate. Each non-management context selects configured-interface
+ *        evidence for ISC DHCPv4 or physical-member evidence for native relay.
+ * @param sock Socket containing the counters
+ * @param msg_type Message type
+ * @return Sum of non-management context health-counter increases since the last snapshot
+ */
+static uint64_t get_all_context_health_counter_delta(int sock, int msg_type)
+{
+    uint64_t delta = 0;
+    for (const auto &[context_ifname, context] : intfs) {
+        if (context->intf_type != DHCP_DEVICE_INTF_TYPE_MGMT) {
+            delta += get_context_health_counter_delta(
+                context_ifname, sock, msg_type);
+        }
+    }
+    return delta;
+}
+
+/**
+ * @code check_all_context_health_counter_not_transmitted(rx_sock, tx_sock, monitored_msgs, monitored_msg_cnt);
+ * @brief Check whether all-context RX exceeds the tolerance while no same-type TX activity is observed.
+ * @param rx_sock RX socket
+ * @param tx_sock TX socket
+ * @param monitored_msgs message types to compare
+ * @param monitored_msg_cnt number of message types
+ * @return true when RX exceeds the tolerance and same-type TX is zero
+ */
+static bool check_all_context_health_counter_not_transmitted(
+    int rx_sock, int tx_sock, const int *monitored_msgs, size_t monitored_msg_cnt)
+{
+    for (size_t i = 0; i < monitored_msg_cnt; i++) {
+        const uint64_t rx_delta =
+            get_all_context_health_counter_delta(rx_sock, monitored_msgs[i]);
+        const uint64_t tx_delta =
+            get_all_context_health_counter_delta(tx_sock, monitored_msgs[i]);
+        if (rx_delta > INFLIGHT_PACKET_TOLERANCE && tx_delta == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool member_delta_within_tolerance(uint64_t parent_delta, uint64_t aggregate_delta,
+                                          size_t member_count);
+
+/**
+ * @code get_vlan_health_counter_delta(vlan, sock, msg_type);
+ * @brief Get the member-side health-counter increase beneath a downstream VLAN.
+ *        The stored VLAN-member aggregate relies on observations from each direct member.
+ *        If a member is a PortChannel using --fallback true, a packet can be captured on
+ *        a physical fallback member without being captured on the PortChannel, causing
+ *        the stored VLAN-member aggregate to miss it. This function instead sums each
+ *        direct member's selected health counter so it can be compared with the VLAN.
+ * @param vlan downstream VLAN name
+ * @param sock socket
+ * @param msg_type DHCP message type
+ * @return Member-side health-counter increase since the last snapshot
+ */
+static uint64_t get_vlan_health_counter_delta(
+    const std::string &vlan, int sock, int msg_type)
+{
+    uint64_t delta = 0;
+    const auto vlan_members = rev_vlan_map.find(vlan);
+    if (vlan_members == rev_vlan_map.end()) {
+        return delta;
+    }
+
+    for (const auto &member : vlan_members->second) {
+        delta += get_health_counter_delta(member, sock, msg_type);
+    }
+    return delta;
+}
+
+/**
+ * @code check_vlan_health_counter_expected(vlan, sock, member_count, monitored_msgs, monitored_msg_cnt);
+ * @brief Check the expected relationship between a downstream VLAN counter and
+ *        its member-side health counter.
+ * @param vlan downstream VLAN name
+ * @param sock socket
+ * @param member_count expected physical observations per packet
+ * @param monitored_msgs message types to compare
+ * @param monitored_msg_cnt number of message types
+ * @return true when VLAN and member-side health-counter deltas match the expected relationship
+ */
+static bool check_vlan_health_counter_expected(const std::string &vlan, int sock, size_t member_count,
+                                              const int *monitored_msgs, size_t monitored_msg_cnt)
+{
+    for (size_t i = 0; i < monitored_msg_cnt; i++) {
+        const uint64_t vlan_delta = get_counter_delta(vlan, sock, monitored_msgs[i]);
+        const uint64_t member_delta =
+            get_vlan_health_counter_delta(vlan, sock, monitored_msgs[i]);
+        if (!member_delta_within_tolerance(
+                vlan_delta, member_delta, member_count)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**
@@ -159,39 +301,70 @@ static bool check_counter_increased(const std::string &ifname, int sock, const i
 }
 
 /**
- * @code dhcp_device_check_positive_health(ifname);
- * @brief Check that RX Discover, Offer, Request, and Ack activity has matching same-type TX activity.
- * @param ifname           interface name
- * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ * @code check_all_context_health_counter_increased(sock, monitored_msgs, monitored_msg_cnt);
+ * @brief Check whether any selected counter increased across all non-management contexts.
+ * @param sock Socket containing the counters
+ * @param monitored_msgs Message types to check
+ * @param monitored_msg_cnt Number of message types
+ * @return true when any selected all-context counter increased
  */
-static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &ifname)
+static bool check_all_context_health_counter_increased(
+    int sock, const int *monitored_msgs, size_t monitored_msg_cnt)
 {
-    return check_counter_not_transmitted(ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
+    for (size_t i = 0; i < monitored_msg_cnt; i++) {
+        if (get_all_context_health_counter_delta(sock, monitored_msgs[i]) > 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
- * @code dhcp_device_check_positive_health_v6(ifname);
- * @brief Check that RX Solicit, Request, or Relay-Forward activity has TX Relay-Forward activity,
- *        and RX Relay-Reply activity has TX Advertise, Reply, or Relay-Reply activity.
- * @param ifname interface name
- * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ * @code dhcp_device_check_all_context_positive_health();
+ * @brief Check positive all-context IPv4 relay health. Positive health means that
+ *        receiving a monitored DORA message is accompanied by at least one same-type
+ *        transmission, subject to the snapshot tolerance.
+ * @return DHCP_MON_STATUS_HEALTHY or DHCP_MON_STATUS_UNHEALTHY
  */
-static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &ifname)
+static dhcp_mon_status_t dhcp_device_check_all_context_positive_health()
 {
-    const bool forward_rx = check_counter_increased(
-        ifname, rx_sock_v6, monitored_v6_forward_rx_msgs,
-        sizeof(monitored_v6_forward_rx_msgs) / sizeof(*monitored_v6_forward_rx_msgs));
-    const bool forward_tx = get_counter_delta(ifname, tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW) > 0;
-    const bool reply_rx = get_counter_delta(ifname, rx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_REPL) > 0;
-    const bool reply_tx = check_counter_increased(
-        ifname, tx_sock_v6, monitored_v6_reply_tx_msgs,
-        sizeof(monitored_v6_reply_tx_msgs) / sizeof(*monitored_v6_reply_tx_msgs));
-
-    if ((forward_rx && !forward_tx) || (reply_rx && !reply_tx)) {
+    if (check_all_context_health_counter_not_transmitted(
+            rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz)) {
         return DHCP_MON_STATUS_UNHEALTHY;
     }
-    return forward_rx || reply_rx ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
+    return DHCP_MON_STATUS_HEALTHY;
+}
+
+/**
+ * @code dhcp_device_check_all_context_positive_health_v6();
+ * @brief Check positive all-context DHCPv6 relay health. Positive health means that
+ *        received client or relay request traffic produces a Relay-Forward transmission,
+ *        and a received Relay-Reply produces client or relay reply traffic, subject to
+ *        the snapshot tolerance.
+ * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
+ */
+static dhcp_mon_status_t dhcp_device_check_all_context_positive_health_v6()
+{
+    uint64_t forward_rx_delta = 0;
+    for (const auto msg_type : monitored_v6_forward_rx_msgs) {
+        forward_rx_delta += get_all_context_health_counter_delta(rx_sock_v6, msg_type);
+    }
+    const uint64_t forward_tx_delta =
+        get_all_context_health_counter_delta(tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW);
+    const uint64_t reply_rx_delta =
+        get_all_context_health_counter_delta(rx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_REPL);
+    uint64_t reply_tx_delta = 0;
+    for (const auto msg_type : monitored_v6_reply_tx_msgs) {
+        reply_tx_delta += get_all_context_health_counter_delta(tx_sock_v6, msg_type);
+    }
+
+    const bool forward_valid = forward_rx_delta <= INFLIGHT_PACKET_TOLERANCE || forward_tx_delta > 0;
+    const bool reply_valid = reply_rx_delta <= INFLIGHT_PACKET_TOLERANCE || reply_tx_delta > 0;
+    if (!forward_valid || !reply_valid) {
+        return DHCP_MON_STATUS_UNHEALTHY;
+    }
+    return forward_rx_delta > 0 || reply_rx_delta > 0 ?
+           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
@@ -229,62 +402,55 @@ static dhcp_mon_status_t dhcp_device_check_negative_health_v6(const std::string 
 }
 
 /**
- * @code check_counters_delta_expected(ifname, other_ifname, sock, member_count, monitored_msgs, monitored_msg_cnt);
- * @brief Check if counter deltas fall within the expected member fan-out range.
- * @param ifname            interface name
- * @param other_ifname      other interface name
- * @param sock              socket
- * @param member_count      maximum member observations per parent packet; one means exact equality
- * @param monitored_msgs    array of monitored message types
- * @param monitored_msg_cnt number of monitored message types
- * @return                  true if deltas match the expected relationship, false otherwise
+ * @code member_delta_within_tolerance(parent_delta, aggregate_delta, member_count);
+ * @brief Check bounded member fan-out with configured snapshot tolerance.
+ * @param parent_delta parent interface packet count
+ * @param aggregate_delta aggregate member-interface packet count
+ * @param member_count direct member count
+ * @return true when aggregate fan-out is within the tolerated range
  */
-static bool check_counters_delta_expected(const std::string &ifname, const std::string &other_ifname, int sock,
-                                          size_t member_count, const int *monitored_msgs, size_t monitored_msg_cnt)
+static bool member_delta_within_tolerance(uint64_t parent_delta, uint64_t aggregate_delta, size_t member_count)
 {
-    const sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
-    const counter_t &counters = sock_info.all_counters.at(ifname);
-    const counter_t &counters_snapshot = sock_info.all_counters_snapshot.at(ifname);
-    const counter_t &other_counters = sock_info.all_counters.at(other_ifname);
-    const counter_t &other_counters_snapshot = sock_info.all_counters_snapshot.at(other_ifname);
-
-    for (size_t i = 0; i < monitored_msg_cnt; i++) {
-        uint64_t delta = counters.at(monitored_msgs[i]) - counters_snapshot.at(monitored_msgs[i]);
-        uint64_t other_delta = other_counters.at(monitored_msgs[i]) - other_counters_snapshot.at(monitored_msgs[i]);
-        if (other_delta < delta || other_delta > delta * member_count) {
-            return false;
-        }
-    }
-    return true;
+    const uint64_t lower_parent = parent_delta > INFLIGHT_PACKET_TOLERANCE ?
+                                  parent_delta - INFLIGHT_PACKET_TOLERANCE : 0;
+    return aggregate_delta >= lower_parent &&
+           aggregate_delta <= (parent_delta + INFLIGHT_PACKET_TOLERANCE) * member_count;
 }
 
 /**
- * @code check_aggregate_health(ifname, sock, monitored_msgs, monitored_msg_cnt);
+ * @code check_vlan_health(vlan, sock, monitored_msgs, monitored_msg_cnt);
  *
- * @brief Compare a parent interface counter with the aggregate of its direct member-interface counters
+ * @brief Check a downstream VLAN by comparing its counter with its member-side health counter
  *
- * @param ifname            Parent interface name
+ * @param vlan              Downstream VLAN interface name
  * @param sock              Socket identifying the protocol family and direction
  * @param monitored_msgs    Message types to compare
  * @param monitored_msg_cnt Number of message types to compare
  *
  * @return HEALTHY when idle or matching, UNHEALTHY when the expected relationship does not match
  */
-static dhcp_mon_status_t check_aggregate_health(const std::string &ifname, int sock, const int *monitored_msgs,
-                                                size_t monitored_msg_cnt)
+static dhcp_mon_status_t check_vlan_health(const std::string &vlan, int sock, const int *monitored_msgs,
+                                           size_t monitored_msg_cnt)
 {
-    const std::string agg_ifname = get_agg_counter_ifname(ifname);
-    const auto vlan = rev_vlan_map.find(ifname);
+    const auto vlan_members = rev_vlan_map.find(vlan);
     // IPv4 VLAN TX fan-out may produce between one and all direct-member observations per packet.
-    const size_t member_count = sock == tx_sock && vlan != rev_vlan_map.end() && !vlan->second.empty() ?
-                                vlan->second.size() : 1;
-    if (!check_counter_increased(ifname, sock, monitored_msgs, monitored_msg_cnt) &&
-        !check_counter_increased(agg_ifname, sock, monitored_msgs, monitored_msg_cnt)) {
-        return DHCP_MON_STATUS_INDETERMINATE;
+    const size_t member_count =
+        sock == tx_sock && vlan_members != rev_vlan_map.end() && !vlan_members->second.empty() ?
+        vlan_members->second.size() : 1;
+    if (vlan_members != rev_vlan_map.end()) {
+        bool activity = check_counter_increased(vlan, sock, monitored_msgs, monitored_msg_cnt);
+        for (size_t i = 0; !activity && i < monitored_msg_cnt; i++) {
+            activity = get_vlan_health_counter_delta(vlan, sock, monitored_msgs[i]) > 0;
+        }
+        if (!activity) {
+            return DHCP_MON_STATUS_INDETERMINATE;
+        }
+        return check_vlan_health_counter_expected(
+                   vlan, sock, member_count, monitored_msgs, monitored_msg_cnt) ?
+               DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
     }
-    return check_counters_delta_expected(
-               ifname, agg_ifname, sock, member_count, monitored_msgs, monitored_msg_cnt) ?
-           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
+
+    return DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
@@ -400,9 +566,23 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
         check_type == DHCP_DEVICE_CHECK_AGG_TX ||
         check_type == DHCP_DEVICE_CHECK_AGG_RX_V6 ||
         check_type == DHCP_DEVICE_CHECK_AGG_TX_V6;
-    if (!aggregate_check &&
-        sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz,
-                                    (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
+    bool counters_unchanged;
+    if (ifname == agg_dev_all) {
+        counters_unchanged =
+            !check_all_context_health_counter_increased(
+                rx_sock, (const int *)monitored_msgs, monitored_msg_sz) &&
+            !check_all_context_health_counter_increased(
+                tx_sock, (const int *)monitored_msgs, monitored_msg_sz) &&
+            !check_all_context_health_counter_increased(
+                rx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz) &&
+            !check_all_context_health_counter_increased(
+                tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
+    } else {
+        counters_unchanged =
+            sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz,
+                                        (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
+    }
+    if (!aggregate_check && counters_unchanged) {
         return DHCP_MON_STATUS_INDETERMINATE;
     }
 
@@ -410,19 +590,19 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
         case DHCP_DEVICE_CHECK_NEGATIVE:
             return dhcp_device_check_negative_health(ifname);
         case DHCP_DEVICE_CHECK_POSITIVE:
-            return dhcp_device_check_positive_health(ifname);
+            return dhcp_device_check_all_context_positive_health();
         case DHCP_DEVICE_CHECK_POSITIVE_V6:
-            return dhcp_device_check_positive_health_v6(ifname);
+            return dhcp_device_check_all_context_positive_health_v6();
         case DHCP_DEVICE_CHECK_NEGATIVE_V6:
             return dhcp_device_check_negative_health_v6(ifname);
         case DHCP_DEVICE_CHECK_AGG_RX:
-            return check_aggregate_health(ifname, rx_sock, (const int *)monitored_msgs, monitored_msg_sz);
+            return check_vlan_health(ifname, rx_sock, (const int *)monitored_msgs, monitored_msg_sz);
         case DHCP_DEVICE_CHECK_AGG_TX:
-            return check_aggregate_health(ifname, tx_sock, (const int *)monitored_msgs, monitored_msg_sz);
+            return check_vlan_health(ifname, tx_sock, (const int *)monitored_msgs, monitored_msg_sz);
         case DHCP_DEVICE_CHECK_AGG_RX_V6:
-            return check_aggregate_health(ifname, rx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
+            return check_vlan_health(ifname, rx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
         case DHCP_DEVICE_CHECK_AGG_TX_V6:
-            return check_aggregate_health(ifname, tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
+            return check_vlan_health(ifname, tx_sock_v6, (const int *)monitored_v6_msgs, monitored_v6_msg_sz);
         default:
             return DHCP_MON_STATUS_UNHEALTHY;
     }
