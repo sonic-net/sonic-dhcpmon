@@ -229,19 +229,18 @@ static dhcp_mon_status_t dhcp_device_check_negative_health_v6(const std::string 
 }
 
 /**
- * @code check_counters_delta_expected(ifname, other_ifname, sock, ratio, monitored_msgs, monitored_msg_cnt);
- * @brief Check if the delta of counters between current and snapshot for given message types
- *        match expectation between two interfaces with a given ratio.
+ * @code check_counters_delta_expected(ifname, other_ifname, sock, member_count, monitored_msgs, monitored_msg_cnt);
+ * @brief Check if counter deltas fall within the expected member fan-out range.
  * @param ifname            interface name
  * @param other_ifname      other interface name
  * @param sock              socket
- * @param ratio             expected ratio between two interfaces, ratio = other_ifname / ifname
+ * @param member_count      maximum member observations per parent packet; one means exact equality
  * @param monitored_msgs    array of monitored message types
  * @param monitored_msg_cnt number of monitored message types
- * @return                  true if deltas are equal with given ratio, false otherwise
+ * @return                  true if deltas match the expected relationship, false otherwise
  */
 static bool check_counters_delta_expected(const std::string &ifname, const std::string &other_ifname, int sock,
-                                         size_t ratio, const int *monitored_msgs, size_t monitored_msg_cnt)
+                                          size_t member_count, const int *monitored_msgs, size_t monitored_msg_cnt)
 {
     const sock_info_t &sock_info = sock_mgr_get_sock_info(sock);
     const counter_t &counters = sock_info.all_counters.at(ifname);
@@ -249,35 +248,14 @@ static bool check_counters_delta_expected(const std::string &ifname, const std::
     const counter_t &other_counters = sock_info.all_counters.at(other_ifname);
     const counter_t &other_counters_snapshot = sock_info.all_counters_snapshot.at(other_ifname);
 
-    // for every delta increase in ifname, there is delta * ratio increase in other ifname
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
         uint64_t delta = counters.at(monitored_msgs[i]) - counters_snapshot.at(monitored_msgs[i]);
         uint64_t other_delta = other_counters.at(monitored_msgs[i]) - other_counters_snapshot.at(monitored_msgs[i]);
-        if (delta * ratio != other_delta) {
+        if (other_delta < delta || other_delta > delta * member_count) {
             return false;
         }
     }
     return true;
-}
-
-/**
- * @code get_aggregate_ratio(ifname, sock);
- *
- * @brief Get the expected aggregate ratio for an interface and packet direction
- *
- * @param ifname    Parent interface name
- * @param sock      Socket identifying the protocol family and direction
- *
- * @return One for RX and PortChannel TX; direct VLAN member count for VLAN TX
- */
-static size_t get_aggregate_ratio(const std::string &ifname, int sock)
-{
-    // RX crosses one edge. VLAN TX is observed on every direct member; PortChannel TX is observed on one member.
-    if (sock_mgr_get_sock_info(sock).is_rx) {
-        return 1;
-    }
-    const auto vlan = rev_vlan_map.find(ifname);
-    return vlan == rev_vlan_map.end() ? 1 : vlan->second.size();
 }
 
 /**
@@ -290,19 +268,22 @@ static size_t get_aggregate_ratio(const std::string &ifname, int sock)
  * @param monitored_msgs    Message types to compare
  * @param monitored_msg_cnt Number of message types to compare
  *
- * @return HEALTHY when idle or matching, UNHEALTHY when the expected ratio does not match
+ * @return HEALTHY when idle or matching, UNHEALTHY when the expected relationship does not match
  */
 static dhcp_mon_status_t check_aggregate_health(const std::string &ifname, int sock, const int *monitored_msgs,
                                                 size_t monitored_msg_cnt)
 {
     const std::string agg_ifname = get_agg_counter_ifname(ifname);
+    const auto vlan = rev_vlan_map.find(ifname);
+    // IPv4 VLAN TX fan-out may produce between one and all direct-member observations per packet.
+    const size_t member_count = sock == tx_sock && vlan != rev_vlan_map.end() && !vlan->second.empty() ?
+                                vlan->second.size() : 1;
     if (!check_counter_increased(ifname, sock, monitored_msgs, monitored_msg_cnt) &&
         !check_counter_increased(agg_ifname, sock, monitored_msgs, monitored_msg_cnt)) {
         return DHCP_MON_STATUS_INDETERMINATE;
     }
     return check_counters_delta_expected(
-               ifname, agg_ifname, sock, get_aggregate_ratio(ifname, sock),
-               monitored_msgs, monitored_msg_cnt) ?
+               ifname, agg_ifname, sock, member_count, monitored_msgs, monitored_msg_cnt) ?
            DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_UNHEALTHY;
 }
 
