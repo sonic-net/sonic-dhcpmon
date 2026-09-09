@@ -334,7 +334,22 @@ static dhcp_device_context_t *interface_to_dev_context(std::unordered_map<std::s
     } else {
         auto port_channel = portchan_map.find(ifname);
         if (port_channel != portchan_map.end()) {
-            return find_device_context(devices, port_channel->second);
+            auto context = find_device_context(devices, port_channel->second);
+            if (context) {
+                return context;
+            }
+            // A physical member can reach the tracked downstream VLAN through its PortChannel.
+            // DualToR requires MUX attribution that is unavailable through a nested PortChannel.
+            if (!dual_tor_sock) {
+                auto port_channel_vlan = vlan_map.find(port_channel->second);
+                if (port_channel_vlan != vlan_map.end()) {
+                    context = find_device_context(devices, port_channel_vlan->second);
+                    if (context && !context->is_uplink) {
+                        return context;
+                    }
+                }
+            }
+            return NULL;
         }
         else {
             // mgmt interface check
@@ -411,6 +426,10 @@ static void read_rx_callback(int fd, short event, void *arg)
         std::string intf(interfaceName);
         context = interface_to_dev_context(devices, intf);
         if (context) {
+            // Count downstream PortChannel RX only on physical members.
+            if (!dual_tor_sock && !context->is_uplink && intf.rfind("PortChannel", 0) == 0) {
+                continue;
+            }
             client_packet_handler(context, rx_recv_buffer, buffer_sz, DHCP_RX);
         }
     }
