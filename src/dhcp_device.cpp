@@ -59,12 +59,19 @@ uint8_t monitored_v6_msg_sz = sizeof(monitored_v6_msgs) / sizeof(*monitored_v6_m
 static const int monitored_v6_forward_rx_msgs[] = {
     DHCPV6_MESSAGE_TYPE_SOLICIT,
     DHCPV6_MESSAGE_TYPE_REQUEST,
+    DHCPV6_MESSAGE_TYPE_CONFIRM,
+    DHCPV6_MESSAGE_TYPE_RENEW,
+    DHCPV6_MESSAGE_TYPE_REBIND,
+    DHCPV6_MESSAGE_TYPE_RELEASE,
+    DHCPV6_MESSAGE_TYPE_DECLINE,
+    DHCPV6_MESSAGE_TYPE_INFORMATION_REQUEST,
     DHCPV6_MESSAGE_TYPE_RELAY_FORW
 };
 
 static const int monitored_v6_reply_tx_msgs[] = {
     DHCPV6_MESSAGE_TYPE_ADVERTISE,
     DHCPV6_MESSAGE_TYPE_REPLY,
+    DHCPV6_MESSAGE_TYPE_RECONFIGURE,
     DHCPV6_MESSAGE_TYPE_RELAY_REPL
 };
 
@@ -172,8 +179,9 @@ static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &if
 
 /**
  * @code dhcp_device_check_positive_health_v6(ifname);
- * @brief Check that RX Solicit, Request, or Relay-Forward activity has TX Relay-Forward activity,
- *        and RX Relay-Reply activity has TX Advertise, Reply, or Relay-Reply activity.
+ * @brief Check that RX Solicit, Request, Confirm, Renew, Rebind, Release, Decline,
+ *        Information-Request, or Relay-Forward activity has TX Relay-Forward activity,
+ *        and RX Relay-Reply activity has TX Advertise, Reply, Reconfigure, or Relay-Reply activity.
  * @param ifname interface name
  * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
@@ -214,9 +222,8 @@ static dhcp_mon_status_t dhcp_device_check_negative_health(const std::string &if
 /**
  * @code dhcp_device_check_negative_health_v6(ifname);
  *
- * @brief Check that DHCPv6 relayed messages are NOT being transmitted out of this interface/dev
- *        using its counters. The interface is negatively healthy if there are NO DHCPv6 message
- *        travelling through it.
+ * @brief Check that none of the monitored DHCPv6 message types are transmitted out of this
+ *        interface/device using its counters.
  *
  * @param ifname           interface name
  *
@@ -400,7 +407,9 @@ dhcp_mon_status_t dhcp_device_get_status(const std::string &ifname, dhcp_device_
         check_type == DHCP_DEVICE_CHECK_AGG_TX ||
         check_type == DHCP_DEVICE_CHECK_AGG_RX_V6 ||
         check_type == DHCP_DEVICE_CHECK_AGG_TX_V6;
-    if (!aggregate_check &&
+    // IPv6 positive health determines activity from its complete directional RX groups.
+    // Keep the shared activity gate and message selection unchanged for the other checks.
+    if (!aggregate_check && check_type != DHCP_DEVICE_CHECK_POSITIVE_V6 &&
         sock_mgr_counters_unchanged(ifname, (const int *)monitored_msgs, monitored_msg_sz,
                                     (const int *)monitored_v6_msgs, monitored_v6_msg_sz)) {
         return DHCP_MON_STATUS_INDETERMINATE;
