@@ -5,3 +5,4 @@ debian/*
 !debian/rules
 *.o
 *.d
+/tests/health_accounting_test
