@@ -134,14 +134,22 @@ static bool check_dhcp_option_53(dhcp_msg_check_profile_t *profile, const dhcp_d
 }
 
 /**
- * @code find_dhcpv6_option(option_code, dhcp6_options, dhcp6_options_sz);
+ * @code find_dhcpv6_option(option_code, dhcp6_options, dhcp6_options_sz, option_len);
  * @brief find dhcpv6 option in dhcpv6 options buffer
  * @param option_code       dhcpv6 option code to find
  * @param dhcp6_options     pointer to dhcpv6 options buffer
  * @param dhcp6_options_sz  size of dhcpv6 options buffer
+ * @param option_len        output, length of the option value when found
  * @return pointer to the option data if found, NULL otherwise
+ *
+ * @note an option is only reported when its declared value length lies wholly
+ *       inside the options buffer. Callers must consult option_len before
+ *       dereferencing the returned pointer, because a well-formed option is
+ *       allowed to declare a zero length, in which case the returned pointer
+ *       is one past the option header and must not be read.
  */
-static const uint8_t* find_dhcpv6_option(uint16_t option_code, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz)
+static const uint8_t* find_dhcpv6_option(uint16_t option_code, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz,
+                                         uint16_t *option_len)
 {
     ssize_t offset = 0;
     uint16_t code, len;
@@ -150,7 +158,14 @@ static const uint8_t* find_dhcpv6_option(uint16_t option_code, const uint8_t *dh
     while (offset + 3 < dhcp6_options_sz) {
         code = ntohs(*(uint16_t *)(dhcp6_options + offset));
         len = ntohs(*(uint16_t *)(dhcp6_options + offset + 2));
+        // the declared value must be entirely within the options buffer
+        if (offset + 4 + (ssize_t)len > dhcp6_options_sz) {
+            return NULL;
+        }
         if (code == option_code) {
+            if (option_len != NULL) {
+                *option_len = len;
+            }
             return dhcp6_options + offset + 4;
         }
         offset += 4 + len;
@@ -237,7 +252,9 @@ static bool check_dhcpv6_message_type(dhcpv6_msg_check_profile_t *profile, const
             // for the second case, we have an implicit guarantee from the above case that the relay check has to exist and also be true
             case DHCPV6_CHECK_HAS_RELAY_OPT: {
                 bool has_relay_opt = *((bool *)(*profile)[DHCPV6_CHECK_HAS_RELAY_OPT]);
-                const uint8_t *option_relay_msg = find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz);
+                uint16_t relay_msg_len = 0;
+                const uint8_t *option_relay_msg = find_dhcpv6_option(OPTION_DHCPV6_RELAY_MSG, dhcp6_options, dhcp6_options_sz,
+                                                                     &relay_msg_len);
                 if ((option_relay_msg != NULL) != has_relay_opt) {
                     syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: relay msg option status not expected in dhcpv6 options, expect %s, get %s, context interface %s, ignore",
                                  has_relay_opt ? "present" : "not present", option_relay_msg != NULL ? "present" : "not present", context->intf);
@@ -248,6 +265,12 @@ static bool check_dhcpv6_message_type(dhcpv6_msg_check_profile_t *profile, const
                 // if we are checking for relay option presence only, break here
                 if (check_type == DHCPV6_CHECK_HAS_RELAY_OPT) {
                     break;
+                }
+                // the relay message option must carry at least the inner message type byte
+                if (relay_msg_len < 1) {
+                    syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: relay msg option is empty, context interface %s, ignore",
+                                 context->intf);
+                    return false;
                 }
                 bool inner_msg_relay = (option_relay_msg[0] >= DHCPV6_MESSAGE_TYPE_RELAY_FORW);
                 if (check_type == DHCPV6_CHECK_LINK_ADDR_INNER_MSG_RELAY && inner_msg_relay == false) {
@@ -284,7 +307,9 @@ static bool check_dhcpv6_message_type(dhcpv6_msg_check_profile_t *profile, const
                 break;
             }
             case DHCPV6_CHECK_INTERFACE_ID: {
-                const uint8_t *option_intf_id = find_dhcpv6_option(OPTION_DHCPV6_INTERFACE_ID, dhcp6_options, dhcp6_options_sz);
+                uint16_t option_len = 0;
+                const uint8_t *option_intf_id = find_dhcpv6_option(OPTION_DHCPV6_INTERFACE_ID, dhcp6_options, dhcp6_options_sz,
+                                                                   &option_len);
                 // interface id is optional, have to check existence first
                 if (option_intf_id == NULL) {
                     syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface id option not found (optional) in dhcpv6 options, context interface %s",
@@ -292,7 +317,6 @@ static bool check_dhcpv6_message_type(dhcpv6_msg_check_profile_t *profile, const
                     break;
                 }
                 syslog_debug(LOG_INFO, "check_dhcpv6_message_type: interface id option found in dhcpv6 options, context interface %s", context->intf);
-                uint16_t option_len = ntohs(*(uint16_t *)(option_intf_id - 2));
                 if (option_len != sizeof(in6_addr)) {
                     syslog_debug(LOG_WARNING, "check_dhcpv6_message_type: interface id option length %d not equal to %zu, context interface %s, ignore",
                                  option_len, sizeof(in6_addr), context->intf);
@@ -610,10 +634,25 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
         if (code == OPTION_DHCPV6_RELAY_MSG) {
             found_relay_msg = true;
             syslog_debug(LOG_INFO, "dhcpv6_sanity_check: dhcpv6 option code %d is a relay message, interface %s", code, ifname.c_str());
+            // the encapsulated message must at least carry its own message type byte,
+            // otherwise reading it would step past the options area
+            if (len < DHCPV6_HEADER_SIZE) {
+                syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: relay message option length %d is smaller than dhcpv6 header size %d, interface %s",
+                             len, DHCPV6_HEADER_SIZE, ifname.c_str());
+                return false;
+            }
             const uint8_t *inner_dhcp6hdr = dhcp6_options + offset + 4;
             uint8_t inner_msg_type = *inner_dhcp6hdr;
-            const uint8_t *inner_dhcp6_options = inner_dhcp6hdr + (inner_msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
-            if (!dhcpv6_sanity_check(ifname, inner_dhcp6hdr, inner_dhcp6_options, len - (inner_dhcp6_options - inner_dhcp6hdr))) {
+            ssize_t inner_hdr_sz = (inner_msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
+            // the encapsulated message must be large enough for the header its own type implies,
+            // otherwise the inner options size below would be negative
+            if ((ssize_t)len < inner_hdr_sz) {
+                syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: relay message option length %d is smaller than inner header size %zd, interface %s",
+                             len, inner_hdr_sz, ifname.c_str());
+                return false;
+            }
+            const uint8_t *inner_dhcp6_options = inner_dhcp6hdr + inner_hdr_sz;
+            if (!dhcpv6_sanity_check(ifname, inner_dhcp6hdr, inner_dhcp6_options, (ssize_t)len - inner_hdr_sz)) {
                 syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid inner dhcpv6 packet, interface %s", ifname.c_str());
                 return false;
             }
@@ -832,10 +871,19 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
                  sock_info.name, msg_type, ifname.c_str(), context->intf, src_ip, dst_ip);
 
     // extract dhcpv6 options
-    uint8_t *dhcp6_options = dhcp6hdr + (msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
+    ssize_t dhcp6_hdr_sz = (msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
     ssize_t dhcp6_sz = ntohs(udphdr->len) - sizeof(struct udphdr) < buffer_sz - (dhcp6hdr - buffer) ?
                        ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - (dhcp6hdr - buffer);
-    ssize_t dhcp6_options_sz = dhcp6_sz - (dhcp6_options - dhcp6hdr);
+    ssize_t dhcp6_options_sz = dhcp6_sz - dhcp6_hdr_sz;
+    // a relay message header is larger than the minimum enforced by udp_sanity_check,
+    // so reject here rather than forming a pointer past the captured buffer
+    if (dhcp6_options_sz < 0) {
+        syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 packet size %zd is smaller than message type %d header size %zd, interface %s, context %s, src ip %s, dst ip %s, malformed",
+                     sock_info.name, dhcp6_sz, msg_type, dhcp6_hdr_sz, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        return;
+    }
+    uint8_t *dhcp6_options = dhcp6hdr + dhcp6_hdr_sz;
 
     // perform dhcpv6 specific sanity check
     if (!dhcpv6_sanity_check(ifname, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
