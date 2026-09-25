@@ -97,7 +97,7 @@ jobs:
     - script: |
         set -ex
         make -f test/Makefile test
-      displayName: "Run dhcpmon unit tests"
+      displayName: "Run dhcpmon unit tests (sanitized)"
   - publish: $(Build.ArtifactStagingDirectory)
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive dhcpmon debian packages"

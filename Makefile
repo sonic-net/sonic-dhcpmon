@@ -38,8 +38,16 @@ deinstall:
 	$(RM) $(DESTDIR)/usr/sbin/$(DHCPMON_TARGET)
 	$(RM) -rf $(DESTDIR)/usr/sbin
 
+# Unit tests. dh_auto_test runs the first of "check" or "test" that exists, so
+# this is the entry point used during dpkg-buildpackage. It runs the plain suite
+# only; the sanitized suite needs ASan/UBSan runtimes and is run separately in
+# CI on amd64.
+check:
+	$(MAKE) -f test/Makefile test-plain
+
 clean:
 	-$(RM) $(EXECUTABLES)$(OBJS)$(C_DEPS) $(DHCPMON_TARGET)
+	-$(MAKE) -f test/Makefile clean
 	-@echo ' '
 
-.PHONY: all clean dependents
+.PHONY: all clean dependents check

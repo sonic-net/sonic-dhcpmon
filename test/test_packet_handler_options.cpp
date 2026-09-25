@@ -23,10 +23,10 @@
  * socket, counter and topology machinery is replaced with inert stand-ins.
  * ------------------------------------------------------------------ */
 
-#include "../src/dhcp_device.h"
-#include "../src/dhcp_check_profile.h"
-#include "../src/sock_mgr.h"
-#include "../src/dhcp_devman.h"
+#include "src/dhcp_device.h"
+#include "src/dhcp_check_profile.h"
+#include "src/sock_mgr.h"
+#include "src/dhcp_devman.h"
 
 bool debug_on = false;
 thread_local bool debug_mask = true;
@@ -64,7 +64,7 @@ const dhcp_device_context_t *dhcp_devman_get_device_context(const std::string &)
 std::string dhcp_devman_get_agg_counter_ifname(const std::string &ifname) { return agg_dev_prefix + ifname; }
 
 /* The unit under test. */
-#include "../src/packet_handler.cpp"
+#include "src/packet_handler.cpp"
 
 /* ------------------------------------------------------------------ */
 
@@ -83,7 +83,7 @@ static void check(const char *group, const char *name, bool ok, const char *deta
 /** Allocate a buffer of exactly n bytes so ASan poisons the byte at index n. */
 static uint8_t *exact_buf(const uint8_t *data, size_t n)
 {
-    uint8_t *p = (uint8_t *)malloc(n ? n : 1);
+    uint8_t *p = (uint8_t *)calloc(n ? n : 1, 1);
     if (n) {
         memcpy(p, data, n);
     }
