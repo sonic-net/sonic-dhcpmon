@@ -82,38 +82,8 @@ static const char *counter_desc[DHCP_COUNTERS_COUNT] = {
     [DHCP_COUNTERS_SNAPSHOT_V6] = "Snapshot_V6",
 };
 
-/**
- * @code check_counter_not_transmitted(ifname, rx_sock, tx_sock, monitored_msgs, monitored_msg_cnt);
- * @brief Check if there are received DHCP messages that are not transmitted out
- *        of this interface/device using its counters.
- * @param ifname            interface name
- * @param rx_sock           rx socket
- * @param tx_sock           tx socket
- * @param monitored_msgs    array of monitored message types
- * @param monitored_msg_cnt number of monitored message types
- * @return                  true if there are received messages not transmitted out, false otherwise
- */
-// these helpers use const int * to accept both dhcp_message_type_t and dhcpv6_message_type_t arrays
-// without duplicating the function for each enum type; safe on GCC/Linux where unscoped enums use int
-static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock, int tx_sock, const int *monitored_msgs, size_t monitored_msg_cnt)
-{
-    const sock_info_t &rx_sock_info = sock_mgr_get_sock_info(rx_sock);
-    const counter_t &rx_counters = rx_sock_info.all_counters.at(ifname);
-    const counter_t &rx_counters_snapshot = rx_sock_info.all_counters_snapshot.at(ifname);
-
-    const sock_info_t &tx_sock_info = sock_mgr_get_sock_info(tx_sock);
-    const counter_t &tx_counters = tx_sock_info.all_counters.at(ifname);
-    const counter_t &tx_counters_snapshot = tx_sock_info.all_counters_snapshot.at(ifname);
-
-    // when there is packet in, no packet out
-    for (size_t i = 0; i < monitored_msg_cnt; i++) {
-        if (rx_counters.at(monitored_msgs[i]) > rx_counters_snapshot.at(monitored_msgs[i]) &&
-            tx_counters.at(monitored_msgs[i]) <= tx_counters_snapshot.at(monitored_msgs[i])) {
-            return true;
-        }
-    }
-    return false;
-}
+/** Logical packets allowed to cross either health snapshot boundary */
+static constexpr uint64_t INFLIGHT_PACKET_TOLERANCE = 1;
 
 /**
  * @code get_counter_delta(ifname, sock, msg_type);
@@ -129,6 +99,29 @@ static uint64_t get_counter_delta(const std::string &ifname, int sock, int msg_t
     const uint64_t current = sock_info.all_counters.at(ifname).at(msg_type);
     const uint64_t snapshot = sock_info.all_counters_snapshot.at(ifname).at(msg_type);
     return current > snapshot ? current - snapshot : 0;
+}
+
+/**
+ * @code check_counter_not_transmitted(ifname, rx_sock, tx_sock, monitored_msgs, monitored_msg_cnt);
+ * @brief Check whether RX exceeds the tolerance while no same-type TX activity is observed.
+ * @param ifname interface name
+ * @param rx_sock RX socket
+ * @param tx_sock TX socket
+ * @param monitored_msgs message types to compare
+ * @param monitored_msg_cnt number of message types
+ * @return true when RX exceeds the tolerance and same-type TX is zero
+ */
+static bool check_counter_not_transmitted(const std::string &ifname, int rx_sock, int tx_sock,
+                                          const int *monitored_msgs, size_t monitored_msg_cnt)
+{
+    for (size_t i = 0; i < monitored_msg_cnt; i++) {
+        const uint64_t rx_delta = get_counter_delta(ifname, rx_sock, monitored_msgs[i]);
+        const uint64_t tx_delta = get_counter_delta(ifname, tx_sock, monitored_msgs[i]);
+        if (rx_delta > INFLIGHT_PACKET_TOLERANCE && tx_delta == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -160,38 +153,45 @@ static bool check_counter_increased(const std::string &ifname, int sock, const i
 
 /**
  * @code dhcp_device_check_positive_health(ifname);
- * @brief Check that RX Discover, Offer, Request, and Ack activity has matching same-type TX activity.
+ * @brief Check whether DORA RX beyond the snapshot tolerance has same-type TX activity.
  * @param ifname           interface name
  * @return                 DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
 static dhcp_mon_status_t dhcp_device_check_positive_health(const std::string &ifname)
 {
-    return check_counter_not_transmitted(ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz) ?
-           DHCP_MON_STATUS_UNHEALTHY : DHCP_MON_STATUS_HEALTHY;
+    if (check_counter_not_transmitted(
+            ifname, rx_sock, tx_sock, (const int *)monitored_msgs, monitored_msg_sz)) {
+        return DHCP_MON_STATUS_UNHEALTHY;
+    }
+    return DHCP_MON_STATUS_HEALTHY;
 }
 
 /**
  * @code dhcp_device_check_positive_health_v6(ifname);
- * @brief Check that RX Solicit, Request, or Relay-Forward activity has TX Relay-Forward activity,
- *        and RX Relay-Reply activity has TX Advertise, Reply, or Relay-Reply activity.
+ * @brief Check DHCPv6 forward/reply transformations with configured logical-packet snapshot tolerance.
  * @param ifname interface name
  * @return DHCP_MON_STATUS_HEALTHY, DHCP_MON_STATUS_UNHEALTHY, or DHCP_MON_STATUS_INDETERMINATE
  */
 static dhcp_mon_status_t dhcp_device_check_positive_health_v6(const std::string &ifname)
 {
-    const bool forward_rx = check_counter_increased(
-        ifname, rx_sock_v6, monitored_v6_forward_rx_msgs,
-        sizeof(monitored_v6_forward_rx_msgs) / sizeof(*monitored_v6_forward_rx_msgs));
-    const bool forward_tx = get_counter_delta(ifname, tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW) > 0;
-    const bool reply_rx = get_counter_delta(ifname, rx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_REPL) > 0;
-    const bool reply_tx = check_counter_increased(
-        ifname, tx_sock_v6, monitored_v6_reply_tx_msgs,
-        sizeof(monitored_v6_reply_tx_msgs) / sizeof(*monitored_v6_reply_tx_msgs));
+    uint64_t forward_rx_delta = 0;
+    for (const auto msg_type : monitored_v6_forward_rx_msgs) {
+        forward_rx_delta += get_counter_delta(ifname, rx_sock_v6, msg_type);
+    }
+    const uint64_t forward_tx_delta = get_counter_delta(ifname, tx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_FORW);
+    const uint64_t reply_rx_delta = get_counter_delta(ifname, rx_sock_v6, DHCPV6_MESSAGE_TYPE_RELAY_REPL);
+    uint64_t reply_tx_delta = 0;
+    for (const auto msg_type : monitored_v6_reply_tx_msgs) {
+        reply_tx_delta += get_counter_delta(ifname, tx_sock_v6, msg_type);
+    }
 
-    if ((forward_rx && !forward_tx) || (reply_rx && !reply_tx)) {
+    const bool forward_valid = forward_rx_delta <= INFLIGHT_PACKET_TOLERANCE || forward_tx_delta > 0;
+    const bool reply_valid = reply_rx_delta <= INFLIGHT_PACKET_TOLERANCE || reply_tx_delta > 0;
+    if (!forward_valid || !reply_valid) {
         return DHCP_MON_STATUS_UNHEALTHY;
     }
-    return forward_rx || reply_rx ? DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
+    return forward_rx_delta > 0 || reply_rx_delta > 0 ?
+           DHCP_MON_STATUS_HEALTHY : DHCP_MON_STATUS_INDETERMINATE;
 }
 
 /**
@@ -229,8 +229,24 @@ static dhcp_mon_status_t dhcp_device_check_negative_health_v6(const std::string 
 }
 
 /**
+ * @code member_delta_within_tolerance(parent_delta, aggregate_delta, member_count);
+ * @brief Check bounded member fan-out with configured snapshot tolerance.
+ * @param parent_delta parent interface packet count
+ * @param aggregate_delta aggregate member-interface packet count
+ * @param member_count direct member count
+ * @return true when aggregate fan-out is within the tolerated range
+ */
+static bool member_delta_within_tolerance(uint64_t parent_delta, uint64_t aggregate_delta, size_t member_count)
+{
+    const uint64_t lower_parent = parent_delta > INFLIGHT_PACKET_TOLERANCE ?
+                                  parent_delta - INFLIGHT_PACKET_TOLERANCE : 0;
+    return aggregate_delta >= lower_parent &&
+           aggregate_delta <= (parent_delta + INFLIGHT_PACKET_TOLERANCE) * member_count;
+}
+
+/**
  * @code check_counters_delta_expected(ifname, other_ifname, sock, member_count, monitored_msgs, monitored_msg_cnt);
- * @brief Check if counter deltas fall within the expected member fan-out range.
+ * @brief Check parent/member counter deltas with configured snapshot tolerance.
  * @param ifname            interface name
  * @param other_ifname      other interface name
  * @param sock              socket
@@ -251,7 +267,7 @@ static bool check_counters_delta_expected(const std::string &ifname, const std::
     for (size_t i = 0; i < monitored_msg_cnt; i++) {
         uint64_t delta = counters.at(monitored_msgs[i]) - counters_snapshot.at(monitored_msgs[i]);
         uint64_t other_delta = other_counters.at(monitored_msgs[i]) - other_counters_snapshot.at(monitored_msgs[i]);
-        if (other_delta < delta || other_delta > delta * member_count) {
+        if (!member_delta_within_tolerance(delta, other_delta, member_count)) {
             return false;
         }
     }
