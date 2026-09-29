@@ -556,10 +556,27 @@ static struct udphdr* ipv6_sanity_check(const std::string &ifname, const uint8_t
 }
 
 /**
- * @code pre_dhcp_sanity_check(ifname, iphdr, udphdr, buffer, buffer_sz, is_v6, check_checksum);
- * @brief perform basic size check for received packet.
+ * @code dhcpv6_header_sanity_check(dhcp6hdr, dhcp6_sz);
+ * @brief check that the message contains the complete DHCPv6 header
+ * @param dhcp6hdr    pointer to the start of the DHCPv6 message
+ * @param dhcp6_sz    available size of the DHCPv6 message in bytes
+ * @return true if the required header fits, false otherwise
+ */
+static bool dhcpv6_header_sanity_check(const uint8_t *dhcp6hdr, ssize_t dhcp6_sz)
+{
+    if (dhcp6_sz < DHCPV6_HEADER_SIZE) {
+        return false;
+    }
+
+    ssize_t dhcp6_hdr_sz = (*dhcp6hdr < DHCPV6_MESSAGE_TYPE_RELAY_FORW ?
+                           DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
+    return dhcp6_sz >= dhcp6_hdr_sz;
+}
+
+/**
+ * @code udp_sanity_check(ifname, udphdr, buffer, buffer_sz, is_v6, check_checksum);
+ * @brief check UDP size and checksum and the enclosed DHCP header size.
  * @param ifname            interface name
- * @param iphdr             pointer to IP header
  * @param udphdr            pointer to UDP header
  * @param buffer            pointer to the received buffer
  * @param buffer_sz         size of the received buffer
@@ -571,9 +588,9 @@ static bool udp_sanity_check(const std::string &ifname, struct udphdr *udphdr, c
 {
     // udphdr len is the length of the udp packet including the udphdr and payload
     // it was misunderstood by previous implementation as only the payload length
-    if (ntohs(udphdr->len) < sizeof(struct udphdr) + (is_v6 ? DHCPV6_HEADER_SIZE : DHCP_HEADER_SIZE)) {
-        syslog_debug(LOG_WARNING, "udp_sanity_check: received udp packet size %d is too small to include dhcp header size %zd, interface %s",
-                     ntohs(udphdr->len), is_v6 ? DHCPV6_HEADER_SIZE : DHCP_HEADER_SIZE, ifname.c_str());
+    if (ntohs(udphdr->len) < sizeof(struct udphdr)) {
+        syslog_debug(LOG_WARNING, "udp_sanity_check: received udp packet size %d is too small to include udp header size %zu, interface %s",
+                     ntohs(udphdr->len), sizeof(struct udphdr), ifname.c_str());
         return false;
     }
     syslog_debug(LOG_INFO, "udp_sanity_check: received udp packet size %d, interface %s",
@@ -587,6 +604,14 @@ static bool udp_sanity_check(const std::string &ifname, struct udphdr *udphdr, c
     syslog_debug(LOG_INFO, "udp_sanity_check: received udp packet size %d plus ip/ipv6 header size within buffer size %d, interface %s",
                  ntohs(udphdr->len), buffer_sz, ifname.c_str());
 
+    const uint8_t *dhcphdr = (const uint8_t *)udphdr + sizeof(struct udphdr);
+    ssize_t dhcp_sz = ntohs(udphdr->len) - (ssize_t)sizeof(struct udphdr);
+    if (is_v6 ? !dhcpv6_header_sanity_check(dhcphdr, dhcp_sz) : dhcp_sz < DHCP_HEADER_SIZE) {
+        syslog_debug(LOG_WARNING, "udp_sanity_check: received udp payload size %zd is too small to include %s header, interface %s",
+                     dhcp_sz, is_v6 ? "dhcpv6" : "dhcp", ifname.c_str());
+        return false;
+    }
+
     if (check_checksum && !validate_udp_checksum(udphdr, buffer, is_v6)) {
         syslog_debug(LOG_WARNING, "udp_sanity_check: udp checksum validation failed: interface %s", ifname.c_str());
         return false;
@@ -597,17 +622,20 @@ static bool udp_sanity_check(const std::string &ifname, struct udphdr *udphdr, c
 }
 
 /**
- * @code dhcpv6_sanity_check(ifname, dhcp6hdr, dhcp6_options, dhcp6_options_sz);
+ * @code dhcpv6_sanity_check(ifname, msg_type, dhcp6_options, dhcp6_options_sz);
  *
  * @brief loop though dhcpv6 options to perform sanity check. If relay message option is found, recursively check inner dhcpv6 packet.
  *
+ * @param ifname            interface name
+ * @param msg_type          DHCPv6 message type read by the caller
+ * @param dhcp6_options     pointer to the DHCPv6 options buffer
+ * @param dhcp6_options_sz  size of the DHCPv6 options buffer
  * @return true if valid, false otherwise
  */
-static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6hdr, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz)
+static bool dhcpv6_sanity_check(const std::string &ifname, uint8_t msg_type, const uint8_t *dhcp6_options, ssize_t dhcp6_options_sz)
 {
     ssize_t offset = 0;
     uint16_t code, len;
-    uint8_t msg_type = *dhcp6hdr;
     bool is_relay = (msg_type == DHCPV6_MESSAGE_TYPE_RELAY_FORW || msg_type == DHCPV6_MESSAGE_TYPE_RELAY_REPL);
     bool found_relay_msg = false;
 
@@ -634,25 +662,16 @@ static bool dhcpv6_sanity_check(const std::string &ifname, const uint8_t *dhcp6h
         if (code == OPTION_DHCPV6_RELAY_MSG) {
             found_relay_msg = true;
             syslog_debug(LOG_INFO, "dhcpv6_sanity_check: dhcpv6 option code %d is a relay message, interface %s", code, ifname.c_str());
-            // the encapsulated message must at least carry its own message type byte,
-            // otherwise reading it would step past the options area
-            if (len < DHCPV6_HEADER_SIZE) {
-                syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: relay message option length %d is smaller than dhcpv6 header size %d, interface %s",
-                             len, DHCPV6_HEADER_SIZE, ifname.c_str());
+            const uint8_t *inner_dhcp6hdr = dhcp6_options + offset + 4;
+            if (!dhcpv6_header_sanity_check(inner_dhcp6hdr, len)) {
+                syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: relay message option length %d is too small to include dhcpv6 header, interface %s",
+                             len, ifname.c_str());
                 return false;
             }
-            const uint8_t *inner_dhcp6hdr = dhcp6_options + offset + 4;
             uint8_t inner_msg_type = *inner_dhcp6hdr;
             ssize_t inner_hdr_sz = (inner_msg_type < DHCPV6_MESSAGE_TYPE_RELAY_FORW ? DHCPV6_HEADER_SIZE : DHCPV6_RELAY_HEADER_SIZE);
-            // the encapsulated message must be large enough for the header its own type implies,
-            // otherwise the inner options size below would be negative
-            if ((ssize_t)len < inner_hdr_sz) {
-                syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid dhcp options: relay message option length %d is smaller than inner header size %zd, interface %s",
-                             len, inner_hdr_sz, ifname.c_str());
-                return false;
-            }
             const uint8_t *inner_dhcp6_options = inner_dhcp6hdr + inner_hdr_sz;
-            if (!dhcpv6_sanity_check(ifname, inner_dhcp6hdr, inner_dhcp6_options, (ssize_t)len - inner_hdr_sz)) {
+            if (!dhcpv6_sanity_check(ifname, inner_msg_type, inner_dhcp6_options, (ssize_t)len - inner_hdr_sz)) {
                 syslog_debug(LOG_WARNING, "dhcpv6_sanity_check: invalid inner dhcpv6 packet, interface %s", ifname.c_str());
                 return false;
             }
@@ -875,8 +894,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
     ssize_t dhcp6_sz = ntohs(udphdr->len) - sizeof(struct udphdr) < buffer_sz - (dhcp6hdr - buffer) ?
                        ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - (dhcp6hdr - buffer);
     ssize_t dhcp6_options_sz = dhcp6_sz - dhcp6_hdr_sz;
-    // a relay message header is larger than the minimum enforced by udp_sanity_check,
-    // so reject here rather than forming a pointer past the captured buffer
+    // Keep a defensive size check before forming the options pointer.
     if (dhcp6_options_sz < 0) {
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 packet size %zd is smaller than message type %d header size %zd, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, dhcp6_sz, msg_type, dhcp6_hdr_sz, ifname.c_str(), context->intf, src_ip, dst_ip);
@@ -886,7 +904,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
     uint8_t *dhcp6_options = dhcp6hdr + dhcp6_hdr_sz;
 
     // perform dhcpv6 specific sanity check
-    if (!dhcpv6_sanity_check(ifname, dhcp6hdr, dhcp6_options, dhcp6_options_sz)) {
+    if (!dhcpv6_sanity_check(ifname, msg_type, dhcp6_options, dhcp6_options_sz)) {
         syslog_debug(LOG_WARNING, "packet_handler_v6 %s: dhcpv6 packet sanity check failed, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, DHCPV6_MESSAGE_TYPE_MALFORMED, dup_to_context);
