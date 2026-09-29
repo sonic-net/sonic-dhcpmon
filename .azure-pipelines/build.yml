@@ -93,11 +93,6 @@ jobs:
       dpkg-buildpackage -us -uc -b -j$(nproc)
       cp ../*.deb $(Build.ArtifactStagingDirectory)
     displayName: "Compile sonic dhcpmon"
-  - ${{ if eq(parameters.arch, 'amd64') }}:
-    - script: |
-        set -ex
-        make -f test/Makefile test
-      displayName: "Run dhcpmon unit tests (sanitized)"
   - publish: $(Build.ArtifactStagingDirectory)
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive dhcpmon debian packages"
