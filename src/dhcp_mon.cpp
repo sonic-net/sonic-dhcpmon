@@ -18,7 +18,9 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <system_error>
 #include <unordered_set>
+#include <utility>
 
 #include "dhcp_mon.h"
 
@@ -29,6 +31,7 @@
 #include "health_check.h"
 #include "util.h"
 #include <swss/events.h>
+#include <swss/redisreply.h>
 #include <swss/subscriberstatetable.h>
 
 #define MINIMUM_BUFFER_SZ 2024
@@ -61,6 +64,7 @@ std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnec
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
     mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
+static bool counters_db_reconnect_required = false;
 
 /**
  * @code recalculate_agg_counter(all_counters);
@@ -494,9 +498,22 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
         }
     }
     last_update_time = std::chrono::steady_clock::now();
-    sock_mgr_update_db_counters();
-    cleanup_stale_db_counters();
-    syslog_debug(LOG_INFO, "Successfully synced cache counter to DB counter");
+    try {
+        if (counters_db_reconnect_required) {
+            auto connector = std::make_shared<swss::DBConnector>("COUNTERS_DB", 0);
+            mCountersDbPtr = std::move(connector);
+            counters_db_reconnect_required = false;
+        }
+        sock_mgr_update_db_counters();
+        cleanup_stale_db_counters();
+        syslog_debug(LOG_INFO, "Successfully synced cache counter to DB counter");
+    } catch (const swss::RedisError& error) {
+        counters_db_reconnect_required = true;
+        syslog(LOG_WARNING, "Failed to sync cache counters to Redis; will reconnect and retry: %s", error.what());
+    } catch (const std::system_error& error) {
+        counters_db_reconnect_required = true;
+        syslog(LOG_WARNING, "Failed to sync cache counters to Redis; will reconnect and retry: %s", error.what());
+    }
 }
 
 /**
