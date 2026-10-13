@@ -36,23 +36,32 @@ int dhcp_mon_init(size_t snaplen, int window_sec, int max_count, int db_update_i
 void dhcp_mon_free();
 
 /**
- * @code dhcp_mon_start(debug);
+ * @code dhcp_mon_start();
  *
- * @brief start monitoring DHCP Relay
+ * @brief Run the main event loop, then join workers and unregister callbacks after shutdown.
  *
  * @param none
  *
- * @return 0 upon success, negative upon failure
+ * @return 0 if the main and worker loops report loopexit, negative otherwise.
  */
 int dhcp_mon_start();
 
 /**
  * @code dhcp_mon_stop();
  *
- * @brief stop monitoring DHCP Relay
+ * @brief Request loopexit for the main and worker event loops.
  *
  * @return none
  */
 void dhcp_mon_stop();
+
+/**
+ * @code dhcp_mon_stop_on_failure();
+ *
+ * @brief Request loopbreak with a queued loopexit fallback for the main and worker event loops.
+ *
+ * @return none
+ */
+void dhcp_mon_stop_on_failure();
 
 #endif /* DHCP_MON_H_ */

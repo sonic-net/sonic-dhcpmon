@@ -11,9 +11,11 @@
 #include <sys/syscall.h>
 #include <assert.h>
 #include <chrono>
+#include <atomic>
 #include <algorithm>
 #include <event2/thread.h>
 #include <mutex>
+#include <exception>
 
 #include "dhcp_mon.h"
 
@@ -41,6 +43,8 @@ static constexpr int MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC = 5;
 static constexpr int CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC = 1;
 /** Mutex lock to modify write_counter_to_db for different threads */
 static std::mutex db_sync_mutex;
+/** Whether completed counter synchronization requires a new health snapshot */
+static std::atomic<bool> counter_sync_snapshot_pending{false};
 /** tag for db_update event */
 static const char db_update_tag[] = "DB_UPDATE";
 /** Latest timestamp of writing cache counter to COUNTERS_DB */
@@ -374,6 +378,7 @@ static void update_cache_counter_callback(evutil_socket_t fd, short event, void 
     // we leave it to db updater to handle it
     if (sock_mgr_pause_write_cache_to_db_all_cleared()) {
         syslog(LOG_INFO, "All sockets cleared pause_write_cache_to_db, start write back to DB counter from cache counter");
+        counter_sync_snapshot_pending = true;
         main_event_mgr->activate_all_events(db_update_tag, EV_TIMEOUT);
     }
 }
@@ -393,6 +398,21 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 {
     syslog_debug(LOG_INFO, "Received timeout signal for DHCP relay health check");
 
+    std::unique_lock<std::mutex> lock(db_sync_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !sock_mgr_pause_write_cache_to_db_all_cleared()) {
+        syslog_debug(LOG_INFO, "Skip DHCP relay health check while counter synchronization is in progress");
+        return;
+    }
+
+    if (counter_sync_snapshot_pending.exchange(false)) {
+        syslog_debug(LOG_INFO, "Skip DHCP relay health check after counter synchronization");
+        lock.unlock();
+        sock_mgr_update_snapshot();
+        return;
+    }
+
+    lock.unlock();
+
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_SNAPSHOT);
     dhcp_devman_print_all_status_debug(DHCP_COUNTERS_CURRENT_V6);
@@ -406,7 +426,7 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
 /**
  * @code db_update_callback(fd, event, arg);
  *
- * @brief periodic timer call back
+ * @brief Publish cached counters and remove stale DB entries; request failure shutdown on a standard exception.
  *
  * @param fd        libevent socket
  * @param event     event triggered
@@ -415,6 +435,7 @@ static void timeout_callback(evutil_socket_t fd, short event, void *arg)
  * @return none
  */
 static void db_update_callback(evutil_socket_t fd, short event, void *arg)
+try
 {
     syslog_debug(LOG_INFO, "Received db update signal");
     syslog_debug(LOG_INFO, "Sync cache counter to DB counter");
@@ -427,6 +448,7 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
         if (elapsed.count() >= clear_counter_timeout) {
             syslog(LOG_WARNING, "Clear counter going on for too long, abort clear counter");
             sock_mgr_clear_pause_write_cache_to_db();
+            counter_sync_snapshot_pending = true;
         } else {
             syslog(LOG_INFO, "Clear counter is ongoing, skip syncing write cache counter to DB counter");
             return;
@@ -436,6 +458,9 @@ static void db_update_callback(evutil_socket_t fd, short event, void *arg)
     sock_mgr_update_db_counters();
     cleanup_stale_db_counters();
     syslog_debug(LOG_INFO, "Successfully synced cache counter to DB counter");
+} catch (const std::exception &error) {
+    syslog(LOG_ALERT, "Unhandled exception in DB update callback, stopping dhcpmon: %s", error.what());
+    dhcp_mon_stop_on_failure();
 }
 
 /**
@@ -722,12 +747,14 @@ int dhcp_mon_start()
         goto wait_sock_mgr_event_loop;
     }
 
-    rv = 0;
-
-    syslog(LOG_INFO, "Dhcp monitor was running successfully and now it is terminating successfully");
-
 wait_sock_mgr_event_loop:
     sock_mgr_wait_event_loop();
+check_event_loop_exit:
+    if (event_base_got_exit(main_event_mgr->get_base()) &&
+        sock_mgr_event_loop_exited_normally()) {
+        rv = 0;
+        syslog(LOG_INFO, "Dhcp monitor was running successfully and now it is terminating successfully");
+    }
 unregister_main_events:
     main_event_mgr->del_all_events();
 unregister_cache_counter_updater:
@@ -749,6 +776,15 @@ void dhcp_mon_stop()
 {
     syslog(LOG_INFO, "Stopping dhcp monitor");
     sock_mgr_stop_event_loop();
+    event_base_loopexit(main_event_mgr->get_base(), NULL);
+    syslog(LOG_INFO, "Stopped dhcp monitor event loops");
+}
+
+void dhcp_mon_stop_on_failure()
+{
+    syslog(LOG_INFO, "Stopping dhcp monitor on failure");
+    sock_mgr_stop_event_loop_on_failure();
+    event_base_loopbreak(main_event_mgr->get_base());
     event_base_loopexit(main_event_mgr->get_base(), NULL);
     syslog(LOG_INFO, "Stopped dhcp monitor event loops");
 }

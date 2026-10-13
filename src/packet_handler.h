@@ -80,11 +80,11 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 /**
  * @code callback_common(fd, event, arg);
  *
- * @brief common callback for libevent which is called every time out in order to read queued incoming packet capture
+ * @brief Process captured packets from a readable raw socket; request failure shutdown on a standard exception.
  *
  * @param fd            socket to read from
  * @param event         libevent triggered event
- * @param arg           user provided argument for callback (interface context)
+ * @param arg           unused
  *
  * @return none
  */
