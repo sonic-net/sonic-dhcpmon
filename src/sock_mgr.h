@@ -83,11 +83,17 @@ void sock_mgr_drain_sock_buffer();
 /** Start the all event loops for socket manager */
 void sock_mgr_start_event_loop();
 
-/** Wait for all event loops to end for socket manager */
+/** Join all socket threads. */
 void sock_mgr_wait_event_loop();
 
-/** Stop all event loops for socket manager */
+/** Check after joining that every socket event loop reports loopexit. */
+bool sock_mgr_event_loop_exited_normally();
+
+/** Request loopexit for all socket event loops. */
 void sock_mgr_stop_event_loop();
+
+/** Request loopbreak with a queued loopexit fallback for all socket event loops. */
+void sock_mgr_stop_event_loop_on_failure();
 
 /** Update snapshot counters for all sockets */
 void sock_mgr_update_snapshot();
