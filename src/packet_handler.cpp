@@ -397,18 +397,16 @@ static bool should_dup_rx_packet(const std::string &ifname, const dhcp_device_co
 }
 
 /**
- * @code find_dhcp_option_53(dhcp_options, dhcp_options_sz, malformed);
+ * @code find_dhcp_option_53(dhcp_options, dhcp_options_sz);
  *
  * @brief loop though dhcp options to find option with tag 53
  *
- * @param malformed set to true on invalid options, false when option 53 is found or End is reached
- * @return pointer to option 53 value if found (not including tag and length), NULL if absent or malformed
+ * @return pointer to option 53 value if found (not including tag and length), NULL if not found
  */
-static const uint8_t* find_dhcp_option_53(const uint8_t *dhcp_options, ssize_t dhcp_options_sz, bool &malformed)
+static const uint8_t* find_dhcp_option_53(const uint8_t *dhcp_options, ssize_t dhcp_options_sz)
 {
     ssize_t offset = 0;
     uint8_t tag, len;
-    malformed = true;
 
     syslog_debug(LOG_INFO, "find_dhcp_option_53: searching dhcp options data of total size %zd for option 53", dhcp_options_sz);
 
@@ -428,24 +426,13 @@ static const uint8_t* find_dhcp_option_53(const uint8_t *dhcp_options, ssize_t d
             return NULL;
         }
         if (tag == OPTION_DHCP_MESSAGE_TYPE) {
-            if (len != 1) {
-                syslog_debug(LOG_WARNING, "find_dhcp_option_53: option 53 has invalid length %d, expected 1", len);
-                return NULL;
-            }
             syslog_debug(LOG_INFO, "find_dhcp_option_53: found option 53 with length %d", len);
-            malformed = false;
             return dhcp_options + offset + 2;
         }
         offset += 2 + len;
     }
 
-    if (offset >= dhcp_options_sz) {
-        syslog_debug(LOG_WARNING, "find_dhcp_option_53: dhcp options ended without option 53 or End");
-        return NULL;
-    }
-
-    malformed = false;
-    syslog_debug(LOG_INFO, "find_dhcp_option_53: did not find option 53 in dhcp options");
+    syslog_debug(LOG_WARNING, "find_dhcp_option_53: did not find option 53 in dhcp options");
     
     return NULL;
 }
@@ -782,15 +769,8 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
     ssize_t dhcp_options_sz = dhcp_sz - DHCP_HEADER_SIZE;
 
     // finally look for dhcp option 53
-    bool malformed;
-    const uint8_t *dhcp_option_53_ptr = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, dhcp_options_sz, malformed);
-    if (malformed) {
-        syslog_debug(LOG_WARNING, "packet_handler %s: invalid dhcp options, interface %s, context %s, src ip %s, dst ip %s, malformed",
-                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
-        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
-        return;
-    }
-    if (dhcp_option_53_ptr == NULL) {
+    const uint8_t *dhcp_option_53_ptr;
+    if ((dhcp_option_53_ptr = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, dhcp_options_sz)) == NULL) {
         syslog_debug(LOG_INFO, "packet_handler %s: option 53 absent, interface %s, context %s, src ip %s, dst ip %s, bootp",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_BOOTP, dup_to_context);
