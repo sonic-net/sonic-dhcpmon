@@ -610,12 +610,32 @@ void sock_mgr_wait_event_loop()
     }
 }
 
+bool sock_mgr_event_loop_exited_normally()
+{
+    for (const auto &[sock, info] : sock_map) {
+        if (!event_base_got_exit(info.event_mgr_ptr->get_base())) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void sock_mgr_stop_event_loop()
 {
     syslog(LOG_INFO, "Stopping event loop for all sockets");
 
     for (auto &[sock, info] : sock_map) {
+        event_base_loopexit(info.event_mgr_ptr->get_base(), NULL);
+    }
+}
+
+void sock_mgr_stop_event_loop_on_failure()
+{
+    syslog(LOG_INFO, "Stopping event loop for all sockets on failure");
+
+    for (auto &[sock, info] : sock_map) {
         event_base_loopbreak(info.event_mgr_ptr->get_base());
+        event_base_loopexit(info.event_mgr_ptr->get_base(), NULL);
     }
 }
 
