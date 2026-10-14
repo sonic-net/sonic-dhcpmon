@@ -397,13 +397,16 @@ static bool should_dup_rx_packet(const std::string &ifname, const dhcp_device_co
 }
 
 /**
- * @code dhcp_options_sanity_check(dhcp_options, dhcp_options_sz);
+ * @code dhcp_sanity_check(ifname, dhcp_options, dhcp_options_sz);
  *
  * @brief loop through dhcp options to validate their lengths
  *
+ * @param ifname            interface name
+ * @param dhcp_options      pointer to the DHCP options buffer
+ * @param dhcp_options_sz   size of the DHCP options buffer
  * @return true if valid, false otherwise
  */
-static bool dhcp_options_sanity_check(const uint8_t *dhcp_options, ssize_t dhcp_options_sz)
+static bool dhcp_sanity_check(const std::string &ifname, const uint8_t *dhcp_options, ssize_t dhcp_options_sz)
 {
     ssize_t offset = 0;
     uint8_t tag, len;
@@ -415,12 +418,14 @@ static bool dhcp_options_sanity_check(const uint8_t *dhcp_options, ssize_t dhcp_
             continue;
         }
         if (offset + 1 == dhcp_options_sz) {
-            syslog_debug(LOG_WARNING, "dhcp_options_sanity_check: dhcp options has tag %d but no len, dhcp option is invalid", tag);
+            syslog_debug(LOG_WARNING, "dhcp_sanity_check: dhcp options has tag %d but no len, dhcp option is invalid, interface %s",
+                         tag, ifname.c_str());
             return false;
         }
         len = dhcp_options[offset + 1];
         if (offset + 2 + len > dhcp_options_sz) {
-            syslog_debug(LOG_WARNING, "dhcp_options_sanity_check: dhcp options has tag %d len %d but no space for value", tag, len);
+            syslog_debug(LOG_WARNING, "dhcp_sanity_check: dhcp options has tag %d len %d but no space for value, interface %s",
+                         tag, len, ifname.c_str());
             return false;
         }
         offset += 2 + len;
@@ -436,7 +441,7 @@ static bool dhcp_options_sanity_check(const uint8_t *dhcp_options, ssize_t dhcp_
  *
  * @return pointer to option 53 value if found (not including tag and length), NULL if not found
  *
- * @note dhcp_options must have passed dhcp_options_sanity_check before lookup.
+ * @note dhcp_options must have passed dhcp_sanity_check before lookup.
  */
 static const uint8_t* find_dhcp_option_53(const uint8_t *dhcp_options, ssize_t dhcp_options_sz)
 {
@@ -797,7 +802,7 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
 
     // validate dhcp options before lookup
     const uint8_t *dhcp_options = buffer + DHCP_OPTIONS_START_OFFSET;
-    if (!dhcp_options_sanity_check(dhcp_options, dhcp_options_sz)) {
+    if (!dhcp_sanity_check(ifname, dhcp_options, dhcp_options_sz)) {
         syslog_debug(LOG_WARNING, "packet_handler %s: dhcp options sanity check failed, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
