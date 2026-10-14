@@ -28,7 +28,6 @@ extern bool dhcpv4_enabled;
 extern bool dhcpv6_enabled;
 
 extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
-extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
 static const char relay_disparity_error[] =
     "dhcpmon detected DHCPv4/v6 packets received but none transmitted for intf: %s. Duration: %d (sec)";
@@ -87,12 +86,6 @@ void initialize_dhcp_relay_health()
         state_data.push_back({vlan, DHCP_DEVICE_CHECK_AGG_TX_V6, NULL, agg_tx_v6_disparity_error, 0, true});
     }
 
-    for (const auto &[portchan, _] : rev_portchan_map) {
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_RX, NULL, agg_rx_disparity_error, 0, false});
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_TX, NULL, agg_tx_disparity_error, 0, false});
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_RX_V6, NULL, agg_rx_v6_disparity_error, 0, true});
-        state_data.push_back({portchan, DHCP_DEVICE_CHECK_AGG_TX_V6, NULL, agg_tx_v6_disparity_error, 0, true});
-    }
 }
 
 void check_dhcp_relay_health()
