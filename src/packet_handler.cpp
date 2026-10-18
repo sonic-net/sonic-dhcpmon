@@ -4,6 +4,7 @@
  *  Implementation of packet handler functions
  */
 
+#include <exception>
 #include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <arpa/inet.h>
@@ -11,6 +12,7 @@
 
 #include "packet_handler.h"
 
+#include "dhcp_mon.h"
 #include "sock_mgr.h"             /** to update to counter */
 #include "dhcp_devman.h"          /** to get the interface info and context */
 #include "dhcp_check_profile.h"   /** to get dhcp/v6 check profile */
@@ -858,6 +860,7 @@ void packet_handler_v6(int sock, const std::string &ifname, const dhcp_device_co
 }
 
 void callback_common(int fd, short event, void *arg)
+try
 {
     ssize_t buffer_sz;
     struct sockaddr_ll sll;
@@ -883,4 +886,7 @@ void callback_common(int fd, short event, void *arg)
             debug_mask = true;
         }
     }
+} catch (const std::exception &error) {
+    syslog(LOG_ALERT, "Unhandled exception in packet callback, stopping dhcpmon: %s", error.what());
+    dhcp_mon_stop_on_failure();
 }
