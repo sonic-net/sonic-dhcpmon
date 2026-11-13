@@ -57,8 +57,8 @@ static std::chrono::steady_clock::time_point last_update_time{};
 static const std::chrono::steady_clock::time_point default_time_point{};
 
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
-std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
-std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0);
+std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0, false, "", true);
+std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0, false, "", true);
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
     mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
