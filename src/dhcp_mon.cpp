@@ -86,7 +86,7 @@ static void recalculate_agg_counter(all_counters_t &all_counters)
                 syslog(LOG_WARNING, "Failed to find device context for interface %s when recalculating agg counter", ifname.c_str());
                 continue;
             }
-            if (mgmt_ifname == context->intf) {
+            if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
                 continue;
             }
             counter_t &agg_counter = all_counters.at(dhcp_devman_get_agg_counter_ifname(ifname));
@@ -554,11 +554,7 @@ static void initialize_all_intf_counters()
         }
     }
 
-    // also initialize mgmt and agg device counters
-    if (mgmt_ifname.size() > 0) {
-        initialize_all_counters(mgmt_ifname);
-    }
-
+    // Management interfaces are included in intfs above; initialize the aggregate next.
     sock_mgr_init_cache_counters(agg_dev_all, DHCP_MESSAGE_TYPE_COUNT, DHCPV6_MESSAGE_TYPE_COUNT);
 
     // counter db (the interfaces) might be outdated, clean up stale entries to be in sync with current tracked interfaces
