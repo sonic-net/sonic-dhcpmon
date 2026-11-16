@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "health_check.h"
+#include "dhcp_devman.h"
 
 #include "util.h"
 
@@ -19,16 +20,6 @@ event_handle_t g_events_handle;
 int window_interval_sec = 18;
 /** dhcp_unhealthy_max_count max count of consecutive unhealthy statuses before reporting to syslog */
 int dhcp_unhealthy_max_count = 10;
-
-extern std::string mgmt_ifname;
-
-extern std::string agg_dev_all;
-
-extern bool dhcpv4_enabled;
-extern bool dhcpv6_enabled;
-
-extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_vlan_map;
-extern std::unordered_map<std::string, std::unordered_set<std::string>> rev_portchan_map;
 
 static const char relay_disparity_error[] =
     "dhcpmon detected DHCPv4/v6 packets received but none transmitted for intf: %s. Duration: %d (sec)";
@@ -71,13 +62,17 @@ void initialize_dhcp_relay_health()
 
     state_data.push_back({agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE, alert_dhcp_relay_disparity,
                           relay_disparity_error, 0, false});
-    if (mgmt_ifname.size() > 0) {
-        state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE, NULL, mgmt_error, 0, false});
+    for (const auto &[ifname, context] : intfs) {
+        if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
+            state_data.push_back({ifname, DHCP_DEVICE_CHECK_NEGATIVE, NULL, mgmt_error, 0, false});
+        }
     }
     state_data.push_back({agg_dev_all, DHCP_DEVICE_CHECK_POSITIVE_V6, alert_dhcp_relay_disparity,
                           relay_disparity_error, 0, true});
-    if (mgmt_ifname.size() > 0) {
-        state_data.push_back({mgmt_ifname, DHCP_DEVICE_CHECK_NEGATIVE_V6, NULL, mgmt_error, 0, true});
+    for (const auto &[ifname, context] : intfs) {
+        if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
+            state_data.push_back({ifname, DHCP_DEVICE_CHECK_NEGATIVE_V6, NULL, mgmt_error, 0, true});
+        }
     }
 
     for (const auto &[vlan, _] : rev_vlan_map) {

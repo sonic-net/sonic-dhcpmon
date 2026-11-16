@@ -49,9 +49,6 @@ extern in6_addr dhcpv6_multicast_ipv6;
 /** downstream interface name */
 extern std::string downstream_ifname;
 
-/** mgmt interface name */
-extern std::string mgmt_ifname;
-
 /** aggregate interface of all except mgmt to track overall packet flow for host */
 extern std::string agg_dev_all;
 extern std::string agg_dev_prefix;

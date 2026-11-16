@@ -56,7 +56,7 @@ static void increase_cache_counter(const std::string &ifname, const dhcp_device_
     increase_single_cache_counter(ifname, sock, type);
 
     // we separate mgmt interface from others and do not increase agg counter
-    if (mgmt_ifname != "" && mgmt_ifname.compare(context->intf) == 0) {
+    if (context->intf_type == DHCP_DEVICE_INTF_TYPE_MGMT) {
         return;
     }
 
@@ -932,7 +932,8 @@ try
         if (context != NULL) {
             // suppress debug logging for duplicate/mgmt packets to reduce log noise
             // safe without RAII: packet handlers don't throw, and next iteration resets debug_mask
-            debug_mask = (ifname == context->intf) && (ifname != mgmt_ifname);
+            debug_mask = (ifname == context->intf) &&
+                         (context->intf_type != DHCP_DEVICE_INTF_TYPE_MGMT);
             ((packet_handler_t)sock_info.packet_handler)(fd, ifname, context, buffer_sz);
             debug_mask = true;
         }

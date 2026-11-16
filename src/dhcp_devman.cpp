@@ -40,7 +40,6 @@ const char dhcpv6_multicast_ipv6_str[] = "ff02::1:2";
 in6_addr dhcpv6_multicast_ipv6 = {0};
 
 std::string downstream_ifname;
-std::string mgmt_ifname;
 
 std::string agg_dev_all;
 std::string agg_dev_prefix;
@@ -64,8 +63,6 @@ dhcpv6_check_profile_t* dhcpv6_check_profile_ptr_tx;
 static uint32_t dhcp_num_south_intf = 0;
 /** dhcp_num_north_intf number of north interfaces */
 static uint32_t dhcp_num_north_intf = 0;
-/** dhcp_num_mgmt_intf number of mgmt interfaces */
-static uint32_t dhcp_num_mgmt_intf = 0;
 
 extern std::shared_ptr<swss::DBConnector> mConfigDbPtr;
 extern std::shared_ptr<swss::DBConnector> mCountersDbPtr;
@@ -80,7 +77,7 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
     // (e.g. an interface that appears twice on the dhcpmon command line because
     // the supervisor template emitted it for two IP prefixes). Without this
     // check, the per-type counter is incremented twice (which trips the
-    // `<= 1` asserts for -id/-im), and `intfs[name] = context;` below silently
+    // `<= 1` assert for -id), and `intfs[name] = context;` below silently
     // overwrites and leaks the previously-registered device context. Treat
     // duplicates as a no-op success so the caller's error path does not fire.
     if (intfs.find(name) != intfs.end()) {
@@ -98,10 +95,6 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
             case 'd':
                 dhcp_num_south_intf++;
                 assert(dhcp_num_south_intf <= 1);
-                break;
-            case 'm':
-                dhcp_num_mgmt_intf++;
-                assert(dhcp_num_mgmt_intf <= 1);
                 break;
             default:
                 break;
@@ -124,12 +117,6 @@ int dhcp_devman_add_intf(const char *name, char intf_type)
             syslog(LOG_INFO, "Set vlan_ipv6_lla to %s", 
                    generate_addr_string((const uint8_t *)&vlan_ipv6_lla, sizeof(vlan_ipv6_lla)).c_str());
         }
-        // we also expect exactly 1 mgmt interface and it's a physical interface
-        if (intf_type == 'm') {
-            mgmt_ifname = name;
-            syslog(LOG_INFO, "Set mgmt_ifname to %s", name);
-        }
-
         intfs[name] = context;
         syslog(LOG_INFO, "Add interface %s of type %c to intfs", name, intf_type);
 
@@ -179,8 +166,7 @@ int dhcp_devman_setup_dual_tor_mode(const char *name)
 bool dhcp_devman_is_tracked_interface(const std::string &ifname)
 {
     return intfs.find(ifname) != intfs.end() ||
-           !dhcp_devman_get_parent_ifname(ifname).empty() ||
-           ifname == mgmt_ifname;
+           !dhcp_devman_get_parent_ifname(ifname).empty();
 }
 
 /**

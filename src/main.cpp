@@ -42,7 +42,7 @@ static const uint32_t dhcpmon_default_db_update_interval = 20;
  */
 static void usage(const char *prog)
 {
-    printf("Usage: %s -id <south interface> {-iu <north interface>}+ -im <mgmt interface> [-u <loopback interface>]"
+    printf("Usage: %s -id <south interface> {-iu <north interface>}+ {-im <mgmt interface>}* [-u <loopback interface>]"
             "[-w <snapshot window in sec>] [-c <unhealthy status count>] [-s <snap length>] [-D] [-d]"
             "[-I <db update interval in sec>]\n", prog);
     printf("where\n");
