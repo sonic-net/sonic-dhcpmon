@@ -47,6 +47,8 @@ static constexpr int MINIMAL_CLEAR_COUNTER_TIMEOUT_SEC = 5;
 static constexpr int CLEAR_COUNTER_DELAY_AFTER_DB_UPDATE_SEC = 1;
 /** Mutex lock to modify write_counter_to_db for different threads */
 static std::mutex db_sync_mutex;
+/** The MUX table shares a non-thread-safe Redis connection across RX threads. */
+std::mutex mux_table_lock;
 /** Whether completed counter synchronization requires a new health snapshot */
 static std::atomic<bool> counter_sync_snapshot_pending{false};
 /** tag for db_update event */

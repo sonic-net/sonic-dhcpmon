@@ -15,6 +15,7 @@ bool debug_on = false;
 extern std::shared_ptr<swss::DBConnector> mStateDbPtr;
 extern std::shared_ptr<swss::Table> mStateDbMuxTablePtr;
 extern std::shared_ptr<swss::DBConnector> mConfigDbPtr;
+extern std::mutex mux_table_lock;
 
 extern bool dual_tor_mode;
 extern std::string downstream_ifname;
@@ -88,9 +89,6 @@ bool addr6_is_primary(const std::string &ifname, const in6_addr *addr)
 bool intf_is_standby(const std::string &ifname)
 {
     if (dual_tor_mode) {
-        // The MUX table shares a non-thread-safe Redis connection across RX threads.
-        static std::mutex mux_table_lock;
-
         std::string state;
         std::lock_guard<std::mutex> lock(mux_table_lock);
         mStateDbMuxTablePtr->hget(ifname, "state", state);
