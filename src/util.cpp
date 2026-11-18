@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -87,7 +88,11 @@ bool addr6_is_primary(const std::string &ifname, const in6_addr *addr)
 bool intf_is_standby(const std::string &ifname)
 {
     if (dual_tor_mode) {
+        // The MUX table shares a non-thread-safe Redis connection across RX threads.
+        static std::mutex mux_table_lock;
+
         std::string state;
+        std::lock_guard<std::mutex> lock(mux_table_lock);
         mStateDbMuxTablePtr->hget(ifname, "state", state);
         return state == "standby";
     }
