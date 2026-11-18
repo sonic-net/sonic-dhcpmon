@@ -13,9 +13,9 @@ thread_local bool debug_mask = true;
 bool debug_on = false;
 
 extern std::shared_ptr<swss::DBConnector> mStateDbPtr;
+extern std::mutex mux_table_lock;
 extern std::shared_ptr<swss::Table> mStateDbMuxTablePtr;
 extern std::shared_ptr<swss::DBConnector> mConfigDbPtr;
-extern std::mutex mux_table_lock;
 
 extern bool dual_tor_mode;
 extern std::string downstream_ifname;
