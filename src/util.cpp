@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -12,6 +13,7 @@ thread_local bool debug_mask = true;
 bool debug_on = false;
 
 extern std::shared_ptr<swss::DBConnector> mStateDbPtr;
+extern std::mutex mux_table_lock;
 extern std::shared_ptr<swss::Table> mStateDbMuxTablePtr;
 extern std::shared_ptr<swss::DBConnector> mConfigDbPtr;
 
@@ -88,6 +90,7 @@ bool intf_is_standby(const std::string &ifname)
 {
     if (dual_tor_mode) {
         std::string state;
+        std::lock_guard<std::mutex> lock(mux_table_lock);
         mStateDbMuxTablePtr->hget(ifname, "state", state);
         return state == "standby";
     }

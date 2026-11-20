@@ -59,6 +59,8 @@ static const std::chrono::steady_clock::time_point default_time_point{};
 std::shared_ptr<swss::DBConnector> mConfigDbPtr = std::make_shared<swss::DBConnector> ("CONFIG_DB", 0);
 std::shared_ptr<swss::DBConnector> mCountersDbPtr = std::make_shared<swss::DBConnector> ("COUNTERS_DB", 0);
 std::shared_ptr<swss::DBConnector> mStateDbPtr = std::make_shared<swss::DBConnector> ("STATE_DB", 0);
+/** The MUX table shares a non-thread-safe Redis connection across RX threads. */
+std::mutex mux_table_lock;
 std::shared_ptr<swss::Table> mStateDbMuxTablePtr = std::make_shared<swss::Table> (
     mStateDbPtr.get(), "HW_MUX_CABLE_TABLE"
 );
