@@ -399,11 +399,51 @@ static bool should_dup_rx_packet(const std::string &ifname, const dhcp_device_co
 }
 
 /**
+ * @code dhcp_sanity_check(ifname, dhcp_options, dhcp_options_sz);
+ *
+ * @brief loop through dhcp options to validate their lengths
+ *
+ * @param ifname            interface name
+ * @param dhcp_options      pointer to the DHCP options buffer
+ * @param dhcp_options_sz   size of the DHCP options buffer
+ * @return true if valid, false otherwise
+ */
+static bool dhcp_sanity_check(const std::string &ifname, const uint8_t *dhcp_options, ssize_t dhcp_options_sz)
+{
+    ssize_t offset = 0;
+    uint8_t tag, len;
+
+    while (offset < dhcp_options_sz && dhcp_options[offset] != OPTION_DHCP_MESSAGE_END) {
+        tag = dhcp_options[offset];
+        if (tag == 0) {
+            offset++;
+            continue;
+        }
+        if (offset + 1 == dhcp_options_sz) {
+            syslog_debug(LOG_WARNING, "dhcp_sanity_check: dhcp options has tag %d but no len, dhcp option is invalid, interface %s",
+                         tag, ifname.c_str());
+            return false;
+        }
+        len = dhcp_options[offset + 1];
+        if (offset + 2 + len > dhcp_options_sz) {
+            syslog_debug(LOG_WARNING, "dhcp_sanity_check: dhcp options has tag %d len %d but no space for value, interface %s",
+                         tag, len, ifname.c_str());
+            return false;
+        }
+        offset += 2 + len;
+    }
+
+    return true;
+}
+
+/**
  * @code find_dhcp_option_53(dhcp_options, dhcp_options_sz);
  *
  * @brief loop though dhcp options to find option with tag 53
  *
  * @return pointer to option 53 value if found (not including tag and length), NULL if not found
+ *
+ * @note dhcp_options must have passed dhcp_sanity_check before lookup.
  */
 static const uint8_t* find_dhcp_option_53(const uint8_t *dhcp_options, ssize_t dhcp_options_sz)
 {
@@ -418,15 +458,7 @@ static const uint8_t* find_dhcp_option_53(const uint8_t *dhcp_options, ssize_t d
             offset++;
             continue;
         }
-        if (offset + 1 == dhcp_options_sz) {
-            syslog_debug(LOG_WARNING, "find_dhcp_option_53: dhcp options has tag %d but no len, dhcp option is invalid", tag);
-            return NULL;
-        }
         len = dhcp_options[offset + 1];
-        if (offset + 2 + len > dhcp_options_sz) {
-            syslog_debug(LOG_WARNING, "find_dhcp_option_53: dhcp options has tag %d len %d but no space for value", tag, len);
-            return NULL;
-        }
         if (tag == OPTION_DHCP_MESSAGE_TYPE) {
             syslog_debug(LOG_INFO, "find_dhcp_option_53: found option 53 with length %d", len);
             return dhcp_options + offset + 2;
@@ -750,6 +782,10 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
                  sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
 
     // when magic cookie doesnt match, it can either be bootp msg or malformed
+    // RFC 1542 section 3.5 recommends that BOOTP use the same magic cookie
+    // as DHCP (99.130.83.99), while allowing vendor-specific cookies.
+    // With that cookie, DHCP is distinguished from BOOTP by the presence
+    // of DHCP Message Type Option 53 (RFC 2131 section 3).
     uint32_t magic_cookie = ntohl(*((uint32_t *)(buffer + DHCP_MAGIC_COOKIE_OFFSET)));
     if (magic_cookie != DHCP_MAGIC_COOKIE) {
         syslog_debug(LOG_WARNING, "packet_handler %s: magic cookie mismatch, interface %s, context %s, src ip %s, dst ip %s, magic cookie in packet: 0x%X",
@@ -766,12 +802,23 @@ void packet_handler(int sock, const std::string &ifname, const dhcp_device_conte
                       ntohs(udphdr->len) - sizeof(struct udphdr) : buffer_sz - DHCP_START_OFFSET;
     ssize_t dhcp_options_sz = dhcp_sz - DHCP_HEADER_SIZE;
 
-    // finally look for dhcp option 53
-    const uint8_t *dhcp_option_53_ptr;
-    if ((dhcp_option_53_ptr = find_dhcp_option_53(buffer + DHCP_OPTIONS_START_OFFSET, dhcp_options_sz)) == NULL) {
-        syslog_debug(LOG_WARNING, "packet_handler %s: cannot find option 53 value in dhcp packet, interface %s, context %s, src ip %s, dst ip %s, malformed",
+    // validate dhcp options before lookup
+    const uint8_t *dhcp_options = buffer + DHCP_OPTIONS_START_OFFSET;
+    if (!dhcp_sanity_check(ifname, dhcp_options, dhcp_options_sz)) {
+        syslog_debug(LOG_WARNING, "packet_handler %s: dhcp options sanity check failed, interface %s, context %s, src ip %s, dst ip %s, malformed",
                      sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
         increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_MALFORMED, dup_to_context);
+        return;
+    }
+    syslog_debug(LOG_INFO, "packet_handler %s: dhcp options sanity check passed, interface %s, context %s, src ip %s, dst ip %s",
+                 sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
+
+    // finally look for dhcp option 53
+    const uint8_t *dhcp_option_53_ptr;
+    if ((dhcp_option_53_ptr = find_dhcp_option_53(dhcp_options, dhcp_options_sz)) == NULL) {
+        syslog_debug(LOG_INFO, "packet_handler %s: option 53 absent, interface %s, context %s, src ip %s, dst ip %s, bootp",
+                     sock_info.name, ifname.c_str(), context->intf, src_ip, dst_ip);
+        increase_cache_counter(ifname, context, sock, DHCP_MESSAGE_TYPE_BOOTP, dup_to_context);
         return;
     }
     dhcp_message_type_t dhcp_option_53 = (dhcp_message_type_t)*dhcp_option_53_ptr;
