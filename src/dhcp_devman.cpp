@@ -21,6 +21,7 @@
 bool dual_tor_mode = false;
 bool dhcpv4_enabled = false;
 bool dhcpv6_enabled = false;
+bool dhcpv4_native_relay = false;
 
 in_addr vlan_ip = {0};
 in6_addr vlan_ipv6_gua = {0};
@@ -235,8 +236,7 @@ static void update_portchannel_mapping()
         auto ifname = key.substr(second + 1);
         bool portchannel_is_context = intfs.find(portchannel) != intfs.end();
         bool portchannel_is_vlan_member = vlan_map.find(portchannel) != vlan_map.end();
-        // Dual-ToR downlink counters require MUX attribution that is unavailable on a nested PortChannel.
-        if (!portchannel_is_context && (!portchannel_is_vlan_member || dual_tor_mode)) {
+        if (!portchannel_is_context && !portchannel_is_vlan_member) {
             all_skipped_ifname += "<" + ifname + ", " + portchannel + ">, ";
             continue;
         }
@@ -301,6 +301,15 @@ int dhcp_devman_init()
     syslog(LOG_INFO, "Enabled DHCP monitoring families for %s: IPv4=%s, IPv6=%s",
            downstream_ifname.c_str(), dhcpv4_enabled ? "true" : "false", dhcpv6_enabled ? "true" : "false");
 
+    auto native_relay = mConfigDbPtr->hget(
+        "DEVICE_METADATA|localhost", "has_sonic_dhcpv4_relay");
+    dhcpv4_native_relay =
+        native_relay &&
+        (*native_relay == "True" || *native_relay == "true");
+    syslog(LOG_INFO, "Using %s DHCPv4 relay health evidence",
+           dhcpv4_native_relay ? "physical-member aggregate" :
+                                 "configured-interface");
+
     giaddr_ip = dual_tor_mode ? loopback_ip : vlan_ip;
     giaddr_ipv6_gua = dual_tor_mode ? loopback_ipv6_gua : vlan_ipv6_gua;
     inet_pton(AF_INET6, dhcpv6_multicast_ipv6_str, &dhcpv6_multicast_ipv6);
@@ -334,6 +343,7 @@ void dhcp_devman_free()
 {
     dhcpv4_enabled = false;
     dhcpv6_enabled = false;
+    dhcpv4_native_relay = false;
     vlan_map.clear();
     portchan_map.clear();
     for (const auto &[ifname, context] : intfs) {
