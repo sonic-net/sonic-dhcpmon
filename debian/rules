@@ -1,8 +1,12 @@
 #!/usr/bin/make -f
 
-export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all,+bindnow
 # Upgrade FORTIFY_SOURCE to level 3 (dpkg default is =2).
 export DEB_CPPFLAGS_MAINT_APPEND = -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,-z,noexecstack
+
+include /usr/share/dpkg/buildflags.mk
+export CPPFLAGS CXXFLAGS LDFLAGS
 
 DEB_CPPFLAGS_APPEND=-std=gnu11
 export DEB_CPPFLAGS_APPEND
