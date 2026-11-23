@@ -25,7 +25,7 @@ all: sonic-dhcpmon
 sonic-dhcpmon: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: G++ C Linker'
-	$(CC) -o "$(DHCPMON_TARGET)" $(OBJS) $(USER_OBJS) $(LIBS)
+	$(CC) $(LDFLAGS) -o "$(DHCPMON_TARGET)" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
