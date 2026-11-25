@@ -1,0 +1,70 @@
+load("@sonic_build_infra//cc:runtime_test.bzl", "native_runtime_test")
+load("@sonic_build_infra//oci:runtime_packages.bzl", "runtime_packages")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@sonic_build_infra//tar:sonic_deploy_tar.bzl", "sonic_deploy_tar")
+package(default_visibility = ["//visibility:public"])
+cc_binary(
+    name = "dhcpmon",
+    srcs = [
+        "src/dhcp_check_profile_relay.cpp", "src/health_check.cpp",
+        "src/packet_handler.cpp", "src/sock_mgr.cpp", "src/event_mgr.cpp",
+        "src/dhcp_device.cpp", "src/dhcp_devman.cpp", "src/dhcp_mon.cpp",
+        "src/util.cpp", "src/main.cpp",
+    ] + glob(["src/*.h"]),
+    copts = ["-O3", "-g3", "-Wall", "-std=c++17"],
+    linkopts = ["-pthread"],
+    deps = [
+        "@sonic_swss_common//:libswsscommon_shared",
+        "@dhcpmon_debian//libevent-dev:libevent_cc",
+        "@dhcpmon_debian//libevent-dev:libevent_pthreads_cc",
+        "@dhcpmon_debian//libexplain-dev:libexplain_cc",
+        "@jsoncpp//:jsoncpp",
+        "@dhcpmon_debian//libboost-thread1.83-dev:libboost_thread_cc",
+        "@dhcpmon_debian//libboost-system1.83-dev:libboost_system_cc",
+        "@dhcpmon_debian//libhiredis-dev:libhiredis_cc",
+        "@dhcpmon_debian//libpcap0.8-dev:libpcap_cc",
+    ],
+)
+sonic_deploy_tar(
+    name = "runtime",
+    binaries = {"usr/sbin/dhcpmon uid=0 gid=0 mode=0755 type=file": ":dhcpmon"},
+    mtree = ["usr type=dir uid=0 gid=0 mode=0755", "usr/sbin type=dir uid=0 gid=0 mode=0755"],
+    force_debug_build = True,
+)
+
+exports_files(["debian/control", "debian/changelog"])
+
+runtime_packages(
+    name = "monitor_metadata",
+    packages = {"sonic-dhcpmon": "//:runtime"},
+    control = "//:debian/control",
+    changelog = "//:debian/changelog",
+    required_paths = {"sonic-dhcpmon": ["usr/sbin/dhcpmon"]},
+    # The shared metadata rule supplies libc, libgcc and libstdc++ for the target.
+    apt_packages = {
+        "@dhcpmon_debian//" + name + ":data": "@dhcpmon_debian//" + name + ":control"
+        for name in [
+            "libevent-2.1-7t64",
+            "libevent-pthreads-2.1-7t64",
+            "libexplain51t64",
+            "libhiredis1.1.0",
+            "libpcap0.8t64",
+        ]
+    },
+    dependencies = ["@sonic_swss_common//:runtime_packages.json"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(name = "util_behavior_binary", testonly = True, srcs = ["tests/util_behavior_test.cpp", "src/util.cpp"] + glob(["src/*.h"]), copts = ["-std=c++17", "-UNDEBUG"], deps = ["@jsoncpp//:jsoncpp", "@sonic_swss_common//:libswsscommon_shared", "@dhcpmon_debian//libexplain-dev:libexplain_cc", "@dhcpmon_debian//libevent-dev:libevent_cc"], visibility = ["//visibility:public"])
+
+# Run with declared target loader/libraries, not an evidence-only host image.
+native_runtime_test(
+    name = "util_behavior_test",
+    binary = ":util_behavior_binary",
+    runtime_payloads = [
+        "@sonic_swss_common//dist:libswsscommon_pkg",
+        "@sonic_swss_common//tools/bazel/runtime:test_runtime",
+        "@dhcpmon_debian//libexplain-dev",
+        "@dhcpmon_debian//libevent-dev",
+    ],
+)

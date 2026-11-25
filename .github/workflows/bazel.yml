@@ -1,0 +1,65 @@
+name: Bazel
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    name: Bazel DHCP monitor (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {label: AMD64, arch: amd64, runner: ubuntu-24.04, runner_arch: X64, machine: x86_64}
+          - {label: ARM64, arch: arm64, runner: ubuntu-24.04-arm, runner_arch: ARM64, machine: aarch64}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    container:
+      image: debian:trixie-20260918@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Prepare native Debian build tools
+        env:
+          EXPECTED_RUNNER: ${{ matrix.runner_arch }}
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$RUNNER_ARCH" = "$EXPECTED_RUNNER"
+          test "$(uname -m)" = "$EXPECTED_MACHINE"
+          test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+          apt-get -o APT::Update::Error-Mode=any update
+          apt-get install -y --no-install-recommends binutils build-essential ca-certificates curl \
+            file git libxml2 patch pkg-config python3 unzip xz-utils zstd
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        with:
+          bazelisk-version: 1.29.0
+          repository-cache: true
+          cache-save: ${{ github.event_name == 'push' }}
+
+      - name: Build and verify the daemon, debug symbols and Debian metadata
+        id: build
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          bash .github/scripts/ci_dhcpmon.sh "$RUNNER_TEMP/dhcpmon-$TARGET_ARCH"
+          echo "directory=$RUNNER_TEMP/dhcpmon-$TARGET_ARCH" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dhcpmon-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.directory }}/
+          if-no-files-found: error

@@ -8,7 +8,7 @@
 #include <string>
 #include <string.h>
 #include <utility>
-#include <jsoncpp/json/json.h>
+#include <json/json.h>
 #include <syslog.h>
 #include <unordered_map>
 #include <vector>
