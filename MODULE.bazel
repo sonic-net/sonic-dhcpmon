@@ -1,0 +1,31 @@
+module(name = "sonic-dhcpmon", version = "0.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.20")
+bazel_dep(name = "sonic-build-infra", version = "0.0.45-77ef625a4ddafc8cdc15f3cc6aee31eabac8a5de", repo_name = "sonic_build_infra")
+bazel_dep(name = "sonic-swss-common", version = "0.0.8-2a4ddd070edb719f2e969a880a5cfff711e64e72", repo_name = "sonic_swss_common")
+bazel_dep(name = "rules_distroless", version = "0.9.4.sonic.26")
+# Select the same production lock when building standalone or as a dependency.
+apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
+apt.import_lock(
+    lock = "@sonic_build_infra//apt:apt.lock.json",
+    requests = "@sonic_build_infra//apt:requests.json",
+    sources = "@sonic_build_infra//apt:sources.json",
+    dependency_sets = ["dhcpmon_debian"],
+    libraries = True,
+)
+use_repo(apt, "dhcpmon_debian")
+
+bazel_dep(name = "jsoncpp", version = "1.9.5")
+
+gcc = use_extension("@sonic_build_infra//toolchains/gcc:extensions.bzl", "gcc")
+use_repo(gcc, "gcc_toolchains")
+register_toolchains("@gcc_toolchains//:all")
+
+single_version_override(module_name = "tar.bzl", version = "0.10.5.sonic.2")
+# Later rules_cc requires a Bazel runtime toolchain unavailable in 8.5.1.
+single_version_override(module_name = "rules_cc", version = "0.2.20")
+# Common registers Rust consumers; its non-root dev toolchains are not inherited.
+bazel_dep(name = "rules_rs", version = "0.1.0")
+rust = use_extension("@rules_rs//rs:rules_rust_reexported_extensions.bzl", "rust", dev_dependency = True)
+rust.toolchain(edition = "2021", versions = ["1.90.0"], extra_target_triples = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"])
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all", dev_dependency = True)

@@ -1,0 +1,7 @@
+common --registry=https://raw.githubusercontent.com/sonic-net/sonic-bazel-registry/main
+common --registry=https://bcr.bazel.build/
+common --platforms=@sonic_build_infra//platforms:x86_64_trixie
+common:aarch64 --platforms=@sonic_build_infra//platforms:aarch64_trixie
+build --compilation_mode=opt
+build --copt=-g
+build --linkopt=-Wl,--build-id

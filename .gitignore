@@ -5,3 +5,6 @@ debian/*
 !debian/rules
 *.o
 *.d
+# Bazel local outputs and resolution evidence
+/bazel-*
+/MODULE.bazel.lock
