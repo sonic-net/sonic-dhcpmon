@@ -235,8 +235,7 @@ static void update_portchannel_mapping()
         auto ifname = key.substr(second + 1);
         bool portchannel_is_context = intfs.find(portchannel) != intfs.end();
         bool portchannel_is_vlan_member = vlan_map.find(portchannel) != vlan_map.end();
-        // Dual-ToR downlink counters require MUX attribution that is unavailable on a nested PortChannel.
-        if (!portchannel_is_context && (!portchannel_is_vlan_member || dual_tor_mode)) {
+        if (!portchannel_is_context && !portchannel_is_vlan_member) {
             all_skipped_ifname += "<" + ifname + ", " + portchannel + ">, ";
             continue;
         }
