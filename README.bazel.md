@@ -1,6 +1,8 @@
 # DHCP monitor source-owned Bazel targets
 
-Use Bazel 8.5.1 and the canonical securely1g registry from `.bazelrc`.
+Use Bazel 8.5.1. The [Bazel configuration](.bazelrc) uses
+[sonic-net/sonic-bazel-registry](https://github.com/sonic-net/sonic-bazel-registry/tree/main)
+and the Bazel Central Registry.
 The default platform is native AMD64/Trixie. The source daemon preserves all ten
 production translation units; runtime/debug TARs and Debian-recipe-derived
 installed-package metadata are owned here. Package metadata is not DEB production.
