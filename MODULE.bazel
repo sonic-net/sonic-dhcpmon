@@ -1,7 +1,7 @@
 module(name = "sonic-dhcpmon", version = "0.1.0")
 bazel_dep(name = "rules_cc", version = "0.2.20")
 bazel_dep(name = "sonic-build-infra", version = "0.0.45-77ef625a4ddafc8cdc15f3cc6aee31eabac8a5de", repo_name = "sonic_build_infra")
-bazel_dep(name = "sonic-swss-common", version = "0.0.8-2a4ddd070edb719f2e969a880a5cfff711e64e72", repo_name = "sonic_swss_common")
+bazel_dep(name = "sonic-swss-common", version = "0.0.9-e06d5157d0a6a7228c8ba7357bdfd5e03623e586", repo_name = "sonic_swss_common")
 bazel_dep(name = "rules_distroless", version = "0.9.4.sonic.26")
 # Select the same production lock when building standalone or as a dependency.
 apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
